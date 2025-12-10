@@ -46,12 +46,14 @@ typedef struct {
     
     int is_my_turn;
     int selected_ship_length;
+    int selected_ship_id;
     int ship_horizontal;
     char message[256];
     
     // Đặt tàu
     int ships_to_place[4];  // [4,3,2,2] - số lượng cần đặt mỗi loại
     int ships_placed_count[5]; // count[2], count[3], count[4]
+    int ships_placed_countMax[5]; // count[2], count[3], count[4]
     int mouse_grid_x, mouse_grid_y;
     int preview_valid;
 } GameData;
@@ -190,6 +192,7 @@ int check_placement_valid(GameData *game, int x, int y, int length, int horizont
 
 void draw_ship_preview(GameData *game, int start_x, int start_y) {
     if(game->selected_ship_length == 0) return;
+    if(game->selected_ship_length == -1) return;
     if(game->mouse_grid_x < 0 || game->mouse_grid_y < 0) return;
     
     int length = game->selected_ship_length;
@@ -226,23 +229,23 @@ void render_placing_ships(GameData *game) {
     int list_x = 50, list_y = 80;
     draw_text(game, "DANH SACH TAU:", list_x, list_y, COLOR_TEXT, game->font);
     
-    const char *ship_names[] = {"Tau lon (4 o)", "Tau vua (3 o)", "Tau nho (2 o)", "Tau nho (2 o)"};
+    const char *ship_names[] = {"Tau lon (4)", "Tau vua (3)", "Tau nho (2)"};
     int ship_lengths[] = {4, 3, 2, 2};
     
-    for(int i = 0; i < 4; i++) {
+    for(int i = 0; i < 3; i++) {
         int y = list_y + 40 + i * 60;
         int placed = (ship_lengths[i] == 4 && game->ships_placed_count[4] > 0) ||
                      (ship_lengths[i] == 3 && game->ships_placed_count[3] > 0) ||
-                     (ship_lengths[i] == 2 && game->ships_placed_count[2] >= (i == 2 ? 1 : 2));
+                     (ship_lengths[i] == 2 && game->ships_placed_count[2] >= 2);
         
         SDL_Color btn_color = placed ? (SDL_Color){0,200,0,255} : (SDL_Color){200,200,200,255};
         char btn_text[64];
-        snprintf(btn_text, 64, "%s %s", ship_names[i], placed ? "[OK]" : "");
+        snprintf(btn_text, 64, "%s %d/%d %s", ship_names[i], game->ships_placed_count[i], game->ships_placed_countMax[i], placed ? "[OK]" : "");
         
         int hover = 0;
         draw_button(game, btn_text, list_x, y, 180, 40, !placed, hover);
         
-        if(game->selected_ship_length == ship_lengths[i] && !placed) {
+        if(game->selected_ship_length == ship_lengths[i] && !placed && game->selected_ship_id == i) {
             SDL_Rect rect = {list_x - 5, y - 5, 190, 50};
             SDL_SetRenderDrawColor(game->renderer, 255, 255, 0, 255);
             SDL_RenderDrawRect(game->renderer, &rect);
@@ -297,6 +300,7 @@ void place_ship(GameData *game, int x, int y) {
     }
     
     int length = game->selected_ship_length;
+    int id =  game->selected_ship_id;
     char dir = game->ship_horizontal ? 'H' : 'V';
     
     // Gửi lệnh PLACE tới server
@@ -327,7 +331,7 @@ void place_ship(GameData *game, int x, int y) {
     
     // Reset lựa chọn sau khi đặt xong
     game->selected_ship_length = 0;
-    
+    game->selected_ship_id = -1;
     // Kiểm tra đã đặt đủ chưa
     int all_placed = (game->ships_placed_count[4] >= 1 && game->ships_placed_count[3] >= 1 && game->ships_placed_count[2] >= 2);
     if(all_placed) {
@@ -343,15 +347,16 @@ void handle_click_placing_ships(GameData *game, int mouse_x, int mouse_y) {
     int list_x = 50, list_y = 120;
     int ship_lengths[] = {4, 3, 2, 2};
     
-    for(int i = 0; i < 4; i++) {
+    for(int i = 0; i < 3; i++) {
         int y = list_y + i * 60;
         SDL_Rect btn = {list_x, y, 180, 40};
         if(mouse_x >= btn.x && mouse_x <= btn.x + btn.w && mouse_y >= btn.y && mouse_y <= btn.y + btn.h) {
             int placed = (ship_lengths[i] == 4 && game->ships_placed_count[4] > 0) ||
                          (ship_lengths[i] == 3 && game->ships_placed_count[3] > 0) ||
-                         (ship_lengths[i] == 2 && game->ships_placed_count[2] >= (i == 2 ? 1 : 2));
+                         (ship_lengths[i] == 2 && game->ships_placed_count[2] >= 2);
             if(!placed) {
                 game->selected_ship_length = ship_lengths[i];
+                game->selected_ship_id = i;
                 snprintf(game->message, sizeof(game->message), "Da chon tau %d o", ship_lengths[i]);
             }
             return;
@@ -670,6 +675,10 @@ int main() {
     init_maps(&game);
     game.state = STATE_PLACING_SHIPS;
     game.selected_ship_length = 0;
+    game.ships_placed_countMax[0] = 1;
+    game.ships_placed_countMax[1] = 1;
+    game.ships_placed_countMax[2] = 2;   
+    game.selected_ship_id = -1;
     game.ship_horizontal = 1;
     game.mouse_grid_x = -1;
     game.mouse_grid_y = -1;
