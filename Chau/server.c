@@ -1,5 +1,4 @@
-// server_debug.c -- improved READY handling + logging + explicit READY_OK
-// BẢN ĐÃ ĐƯỢC COMMENT CHI TIẾT TỪNG PHẦN
+// server with database integration - ELO rating system
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +6,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <errno.h>
+#include "src/database.h"
 
 #define PORT 5500
 #define MAX_PLAYER 2
@@ -18,33 +18,44 @@
 // CẤU TRÚC TÀU
 // ==========================
 typedef struct {
-    int length;                     // độ dài tàu (2,3,4)
-    int x[MAP_SIZE];                // danh sách các điểm trên trục x
-    int y[MAP_SIZE];                // danh sách các điểm trên trục y
-    int hits;                       // số lượng ô đã bị bắn trúng
-    int alive;                      // còn sống? 1 = còn, 0 = chìm
+    int length;
+    int x[MAP_SIZE];
+    int y[MAP_SIZE];
+    int hits;
+    int alive;
 } Ship;
 
 // ==========================
-// CẤU TRÚC NGƯỜI CHƠI
+// CẤU TRÚC NGƯỜI CHƠI (đã thêm user info)
 // ==========================
 typedef struct {
-    int fd;                         // socket kết nối đến client
-    char map[MAP_SIZE][MAP_SIZE];   // bản đồ thật của người chơi
-    char enemy_map[MAP_SIZE][MAP_SIZE]; // bản đồ ghi nhận đối thủ (x, o, @)
-    Ship ships[MAX_SHIP];           // danh sách tàu đã đặt
-    int ship_count;                 // số tàu đã đặt
-    int ready;                      // đã READY hay chưa
+    int fd;
+    char map[MAP_SIZE][MAP_SIZE];
+    char enemy_map[MAP_SIZE][MAP_SIZE];
+    Ship ships[MAX_SHIP];
+    int ship_count;
+    int ready;
+    
+    // Database integration
+    int user_id;              // ID từ database (-1 = chưa đăng nhập)
+    char username[50];        // Tên đăng nhập
+    int is_authenticated;     // Đã đăng nhập chưa
 } Player;
 
 // ==========================
-// CẤU TRÚC TRẬN ĐẤU
+// CẤU TRÚC TRẬN ĐẤU (đã thêm stats)
 // ==========================
 typedef struct {
-    Player players[MAX_PLAYER];     // 2 người chơi
-    int player_count;               // số người đã kết nối (tối đa 2)
-    int current_turn;               // lượt hiện tại (0 hoặc 1)
-    pthread_mutex_t lock;           // khóa để tránh conflict
+    Player players[MAX_PLAYER];
+    int player_count;
+    int current_turn;
+    pthread_mutex_t lock;
+    
+    // Game stats cho ELO
+    int player_shots[MAX_PLAYER];     // Tổng số lần bắn
+    int player_hits[MAX_PLAYER];      // Số lần bắn trúng
+    char moves_log[4096];             // Log các nước đi
+    int match_started;                // Trận đã bắt đầu chưa
 } Match;
 
 Match match;
@@ -60,9 +71,6 @@ void init_map(char map[MAP_SIZE][MAP_SIZE]){
 
 // ==========================
 // KIỂM TRA NGƯỜI CHƠI ĐÃ ĐẶT ĐỦ TÀU CHƯA
-// 1 tàu độ dài 4
-// 1 tàu độ dài 3
-// 2 tàu độ dài 2
 // ==========================
 int check_ready(Player *p){
     int count4=0,count3=0,count2=0;
@@ -75,8 +83,7 @@ int check_ready(Player *p){
 }
 
 // ==========================
-// ĐÁNH DẤU TÀU ĐÃ CHÌM → '@'
-// Cập nhật cả map thật và map Enemy
+// ĐÁNH DẤU TÀU ĐÃ CHÌM
 // ==========================
 void mark_sunk(Player *p, Player *enemy){
     for(int s=0;s<p->ship_count;s++){
@@ -92,11 +99,6 @@ void mark_sunk(Player *p, Player *enemy){
 
 // ==========================
 // GỬI TRẠNG THÁI MAP
-// Bao gồm OWN MAP + ENEMY MAP
-// Dùng khi:
-//  - đặt tàu
-//  - cập nhật sau FIRE
-//  - bắt đầu trận
 // ==========================
 void send_state(Player *p){
     char msg[BUFF_SIZE];
@@ -121,30 +123,18 @@ void send_state(Player *p){
     }
 
     strcat(msg,"#");
-    int result = send(p->fd, msg, strlen(msg), MSG_DONTWAIT);
-    if(result < 0) {
-        printf("DEBUG: Failed to send STATE to player (non-blocking)\n");
-    }
+    send(p->fd, msg, strlen(msg), 0);
 }
 
 // ==========================
-// GỬI THÔNG BÁO CHO CẢ 2 CLIENT (internal, no lock)
+// GỬI THÔNG BÁO CHO CẢ 2 CLIENT
 // ==========================
 void broadcast_nolock(const char *msg){
     for(int i=0;i<match.player_count;i++){
-        // Use blocking send - should be fast for small messages
-        int result = send(match.players[i].fd, msg, strlen(msg), 0);
-        if(result < 0) {
-            printf("DEBUG: Failed to send '%s' to player %d (fd=%d): errno=%d\n", msg, i, match.players[i].fd, errno);
-        } else {
-            printf("DEBUG: Sent '%s' (%d bytes) to player %d (fd=%d)\n", msg, result, i, match.players[i].fd);
-        }
+        send(match.players[i].fd, msg, strlen(msg), 0);
     }
 }
 
-// ==========================
-// GỬI THÔNG BÁO CHO CẢ 2 CLIENT (with lock)
-// ==========================
 void broadcast(const char *msg){
     pthread_mutex_lock(&match.lock);
     broadcast_nolock(msg);
@@ -152,18 +142,138 @@ void broadcast(const char *msg){
 }
 
 // ==========================
-// XỬ LÝ HÀNH ĐỘNG FIRE
-// - MISS: 'x'
-// - HIT:  'o'
-// - SUNK: '@'
+// XỬ LÝ ĐĂNG KÝ
 // ==========================
-void process_fire(Player *attacker, Player *target, int x, int y){
+void handle_register(Player *p, char *buffer){
+    char username[50], password[50];
+    if(sscanf(buffer+9, "%[^:]:%s", username, password) == 2){
+        int user_id = db_register_user(username, password);
+        if(user_id > 0){
+            send(p->fd, "REGISTER_OK#", 12, 0);
+            printf("User registered: %s (ID: %d)\n", username, user_id);
+        } else {
+            send(p->fd, "REGISTER_FAIL:Username exists#", 31, 0);
+        }
+    } else {
+        send(p->fd, "REGISTER_FAIL:Invalid format#", 30, 0);
+    }
+}
+
+// ==========================
+// XỬ LÝ ĐĂNG NHẬP
+// ==========================
+void handle_login(Player *p, char *buffer){
+    char username[50], password[50];
+    if(sscanf(buffer+6, "%[^:]:%s", username, password) == 2){
+        UserProfile profile;
+        int user_id = db_login_user(username, password, &profile);
+        
+        if(user_id > 0){
+            pthread_mutex_lock(&match.lock);
+            p->user_id = user_id;
+            strcpy(p->username, profile.username);
+            p->is_authenticated = 1;
+            pthread_mutex_unlock(&match.lock);
+            
+            char response[BUFF_SIZE];
+            snprintf(response, sizeof(response), 
+                    "LOGIN_OK:%s:%d:%d:%d:%d#", 
+                    profile.username, profile.total_games, 
+                    profile.wins, profile.elo_rating, user_id);
+            send(p->fd, response, strlen(response), 0);
+            printf("User logged in: %s (ELO: %d)\n", username, profile.elo_rating);
+        } else {
+            send(p->fd, "LOGIN_FAIL:Invalid credentials#", 32, 0);
+        }
+    }
+}
+
+// ==========================
+// XỬ LÝ LOGOUT
+// ==========================
+void handle_logout(Player *p){
+    if(p->user_id > 0){
+        db_logout_user(p->user_id);
+        printf("User logged out: %s\n", p->username);
+    }
+    pthread_mutex_lock(&match.lock);
+    p->user_id = -1;
+    p->is_authenticated = 0;
+    pthread_mutex_unlock(&match.lock);
+    send(p->fd, "LOGOUT_OK#", 10, 0);
+}
+
+// ==========================
+// XỬ LÝ XEM PROFILE
+// ==========================
+void handle_profile(Player *p){
+    if(p->user_id <= 0){
+        send(p->fd, "PROFILE_FAIL:Not logged in#", 28, 0);
+        return;
+    }
+    
+    UserProfile profile;
+    if(db_get_user_profile(p->user_id, &profile) == 0){
+        char response[BUFF_SIZE];
+        snprintf(response, sizeof(response), 
+                "PROFILE:%s:%d:%d:%d:%d:%d#",
+                profile.username, profile.total_games, profile.wins, 
+                profile.losses, profile.total_score, profile.elo_rating);
+        send(p->fd, response, strlen(response), 0);
+    }
+}
+
+// ==========================
+// XỬ LÝ XEM LỊCH SỬ
+// ==========================
+void handle_history(Player *p){
+    if(p->user_id <= 0){
+        send(p->fd, "HISTORY_FAIL:Not logged in#", 28, 0);
+        return;
+    }
+    
+    MatchHistory* matches;
+    int count;
+    
+    if(db_get_match_history(p->user_id, &matches, &count) == 0){
+        char response[BUFF_SIZE * 2];
+        int offset = sprintf(response, "HISTORY:%d#", count);
+        
+        for(int i=0; i<count && i<10; i++){
+            offset += snprintf(response + offset, sizeof(response) - offset,
+                "M%d:W%d:ELO%+d#", 
+                matches[i].match_id,
+                matches[i].winner_id,
+                (matches[i].player1_id == p->user_id) ? 
+                    matches[i].player1_elo_gain : matches[i].player2_elo_gain
+            );
+        }
+        
+        send(p->fd, response, strlen(response), 0);
+        free(matches);
+    }
+}
+
+// ==========================
+// XỬ LÝ FIRE VỚI STATS
+// ==========================
+void process_fire(Player *attacker, Player *target, int x, int y, int attacker_id){
     char cell = target->map[y][x];
+    
+    // Ghi log
+    char log_entry[64];
+    snprintf(log_entry, sizeof(log_entry), "P%d:%d,%d:", attacker_id, x, y);
+    strcat(match.moves_log, log_entry);
+
+    match.player_shots[attacker_id]++;
 
     // MISS
     if(cell=='-' || cell=='x' || cell=='o' || cell=='@'){
         attacker->enemy_map[y][x]='x';
-        char res[64]; snprintf(res,sizeof(res),"RESULT:MISS,%d,%d#",x+1,y+1);
+        strcat(match.moves_log, "MISS;");
+        
+        char res[64]; 
+        snprintf(res,sizeof(res),"RESULT:MISS,%d,%d#",x+1,y+1);
         send(attacker->fd,res,strlen(res),0);
         printf("DEBUG: MISS at (%d,%d)\n", x+1, y+1);
     }
@@ -171,8 +281,9 @@ void process_fire(Player *attacker, Player *target, int x, int y){
     else if(cell>='2' && cell<='5'){
         attacker->enemy_map[y][x]='o';
         target->map[y][x]='o';
+        match.player_hits[attacker_id]++;
+        strcat(match.moves_log, "HIT;");
 
-        // kiểm tra có chìm tàu không
         for(int s=0;s<target->ship_count;s++){
             Ship *sh=&target->ships[s];
             for(int k=0;k<sh->length;k++){
@@ -189,15 +300,66 @@ void process_fire(Player *attacker, Player *target, int x, int y){
 
         mark_sunk(target, attacker);
 
-        char res[64]; snprintf(res,sizeof(res),"RESULT:HIT,%d,%d#",x+1,y+1);
+        char res[64]; 
+        snprintf(res,sizeof(res),"RESULT:HIT,%d,%d#",x+1,y+1);
         send(attacker->fd,res,strlen(res),0);
         printf("DEBUG: HIT at (%d,%d)\n", x+1, y+1);
     }
 }
 
 // ==========================
-// THREAD XỬ LÝ TỪNG CLIENT
-// Nhận lệnh PLACE / READY / FIRE / QUIT
+// LƯU KẾT QUẢ TRẬN ĐẤU VÀO DATABASE
+// ==========================
+void save_match_result(int winner_id){
+    // Chỉ lưu nếu cả 2 đã đăng nhập
+    if(match.players[0].user_id <= 0 || match.players[1].user_id <= 0){
+        printf("DEBUG: Match not saved - players not authenticated\n");
+        return;
+    }
+
+    MatchHistory m;
+    m.player1_id = match.players[0].user_id;
+    m.player2_id = match.players[1].user_id;
+    m.winner_id = winner_id;
+    
+    // Tính điểm
+    m.player1_score = match.player_hits[0] * 10;
+    m.player2_score = match.player_hits[1] * 10;
+    
+    // Tính hit_diff
+    m.player1_hit_diff = match.player_hits[0] - match.player_hits[1];
+    m.player2_hit_diff = match.player_hits[1] - match.player_hits[0];
+    
+    // Tính accuracy
+    m.player1_accuracy = (match.player_shots[0] > 0) ? 
+        (float)match.player_hits[0] / match.player_shots[0] : 0.0;
+    m.player2_accuracy = (match.player_shots[1] > 0) ? 
+        (float)match.player_hits[1] / match.player_shots[1] : 0.0;
+    
+    // Copy moves log
+    strncpy(m.match_data, match.moves_log, sizeof(m.match_data)-1);
+    m.match_data[sizeof(m.match_data)-1] = '\0';
+    
+    // Lưu match (tự động tính ELO)
+    int match_id = db_save_match(&m);
+    
+    // Cập nhật stats
+    db_update_score(m.player1_id, m.player1_score, winner_id == m.player1_id);
+    db_update_score(m.player2_id, m.player2_score, winner_id == m.player2_id);
+    
+    printf("Match saved: ID=%d, Winner=%d, P1_ELO:%+d, P2_ELO:%+d\n",
+           match_id, winner_id, m.player1_elo_gain, m.player2_elo_gain);
+    
+    // Gửi thông tin ELO về client
+    char elo_msg[256];
+    snprintf(elo_msg, sizeof(elo_msg), 
+            "ELO_UPDATE:P1:%+d:P2:%+d#",
+            m.player1_elo_gain, m.player2_elo_gain);
+    broadcast(elo_msg);
+}
+
+// ==========================
+// THREAD XỬ LÝ CLIENT
 // ==========================
 void *client_handler(void *arg){
     int id = *(int*)arg; free(arg);
@@ -210,64 +372,77 @@ void *client_handler(void *arg){
         int n = recv(p->fd, buff, BUFF_SIZE-1, 0);
         if(n <= 0){
             printf("Player %d disconnected\n", id);
+            if(p->user_id > 0) db_logout_user(p->user_id);
             break;
         }
         buff[n] = '\0';
 
-        // client có thể gửi nhiều lệnh cùng lúc, phân tách bằng '#'
         char *tok_save = NULL;
         char *cmd = strtok_r(buff, "#", &tok_save);
 
         while(cmd){
-            // bỏ xuống dòng
             while(*cmd=='\n' || *cmd=='\r') cmd++;
 
             // ==========================
-            // LỆNH ĐẶT TÀU PLACE
+            // DATABASE COMMANDS
             // ==========================
-            if(strncmp(cmd,"PLACE:",6)==0){
+            if(strncmp(cmd,"REGISTER:",9)==0){
+                handle_register(p, cmd);
+            }
+            else if(strncmp(cmd,"LOGIN:",6)==0){
+                handle_login(p, cmd);
+            }
+            else if(strcmp(cmd,"LOGOUT")==0){
+                handle_logout(p);
+            }
+            else if(strcmp(cmd,"PROFILE")==0){
+                handle_profile(p);
+            }
+            else if(strcmp(cmd,"HISTORY")==0){
+                handle_history(p);
+            }
+
+            // ==========================
+            // GAME COMMANDS
+            // ==========================
+            else if(strncmp(cmd,"PLACE:",6)==0){
                 int length,x,y; char dir;
                 sscanf(cmd+6,"%d,%d,%d,%c",&length,&x,&y,&dir);
                 printf("DEBUG: Player %d PLACE len=%d x=%d y=%d dir=%c\n",
                        id,length,x,y,dir);
 
-                x--; y--;  // quy về 0-index
+                x--; y--;
 
-                // đổi hướng sang H/V
                 if(dir>='a' && dir<='z') dir = dir - 'a' + 'A';
                 if(dir!='H' && dir!='V'){
-                    send(p->fd,"ERROR:Invalid direction (H/V).#",31,0);
+                    send(p->fd,"ERROR:Invalid direction#",24,0);
                     cmd = strtok_r(NULL,"#",&tok_save);
                     continue;
                 }
 
-                // giới hạn số lượng tàu từng loại
                 int max_ships = (length==4||length==3)?1:2;
                 int count=0;
                 for(int i=0;i<p->ship_count;i++)
                     if(p->ships[i].length==length) count++;
                 if(count>=max_ships){
-                    send(p->fd,"ERROR:You have already placed all ships of this type.#",58,0);
+                    send(p->fd,"ERROR:Already placed all ships of this type#",45,0);
                     cmd = strtok_r(NULL,"#",&tok_save);
                     continue;
                 }
 
-                // tính vị trí cuối theo hướng H/V
                 int dx = (dir=='H')?1:0;
                 int dy = (dir=='V')?1:0;
                 int ex = x + dx*(length-1);
                 int ey = y + dy*(length-1);
 
-                // kiểm tra out-of-bounds
                 if(x<0 || y<0 || ex<0 || ey<0 ||
                    x>=MAP_SIZE || y>=MAP_SIZE ||
                    ex>=MAP_SIZE || ey>=MAP_SIZE){
-                    send(p->fd,"ERROR:Ship placement out of bounds.#",36,0);
+                    send(p->fd,"ERROR:Out of bounds#",20,0);
                     cmd=strtok_r(NULL,"#",&tok_save);
                     continue;
                 }
 
-                // kiểm tra overlap
                 int overlap=0;
                 for(int i=0;i<length;i++){
                     int tx=x+dx*i;
@@ -275,12 +450,11 @@ void *client_handler(void *arg){
                     if(p->map[ty][tx] != '-') { overlap=1; break; }
                 }
                 if(overlap){
-                    send(p->fd,"ERROR:Ship overlaps existing ship.#",35,0);
+                    send(p->fd,"ERROR:Ship overlaps#",20,0);
                     cmd=strtok_r(NULL,"#",&tok_save);
                     continue;
                 }
 
-                // ghi tàu vào map
                 pthread_mutex_lock(&match.lock);
 
                 Ship *sh=&p->ships[p->ship_count];
@@ -303,9 +477,6 @@ void *client_handler(void *arg){
                 send_state(p);
             }
 
-            // ==========================
-            // READY
-            // ==========================
             else if(strcmp(cmd,"READY")==0){
                 printf("DEBUG: Player %d sent READY\n", id);
 
@@ -315,67 +486,43 @@ void *client_handler(void *arg){
                     p->ready=1;
                     send(p->fd,"READY_OK:#",10,0);
 
-                    // kiểm tra cả 2 READY
                     int all_ready=1;
                     for(int i=0;i<MAX_PLAYER;i++){
                         if(match.players[i].ready==0) all_ready=0;
                     }
-                    
-                    printf("DEBUG: all_ready=%d, player_count=%d, MAX_PLAYER=%d\n", 
-                           all_ready, match.player_count, MAX_PLAYER);
-                    printf("DEBUG: Player 0 ready=%d, Player 1 ready=%d\n",
-                           match.players[0].ready, match.players[1].ready);
 
                     if(all_ready && match.player_count==MAX_PLAYER){
                         printf("DEBUG: MATCH START\n");
-                        fflush(stdout);
                         
-                        // Đợi một chút để client nhận READY_OK trước
-                        usleep(100000); // 100ms
+                        // Reset stats
+                        match.player_shots[0] = 0;
+                        match.player_shots[1] = 0;
+                        match.player_hits[0] = 0;
+                        match.player_hits[1] = 0;
+                        memset(match.moves_log, 0, sizeof(match.moves_log));
+                        match.match_started = 1;
                         
-                        printf("DEBUG: Broadcasting MATCH_START...\n");
-                        fflush(stdout);
+                        usleep(100000);
                         broadcast_nolock("MATCH_START:#");
-                        printf("DEBUG: MATCH_START broadcasted\n");
-                        fflush(stdout);
 
-                        // gửi state trước
-                        printf("DEBUG: Sending STATE to both players...\n");
-                        fflush(stdout);
                         for(int i=0;i<MAX_PLAYER;i++)
                             send_state(&match.players[i]);
-                        printf("DEBUG: STATE sent\n");
-                        fflush(stdout);
 
                         match.current_turn=0;
-
-                        // thông báo lượt
-                        printf("DEBUG: Sending YOUR_TURN to player 0...\n");
-                        fflush(stdout);
-                        int r1 = send(match.players[0].fd,"YOUR_TURN:#",11,MSG_DONTWAIT);
-                        printf("DEBUG: YOUR_TURN result: %d\n", r1);
-                        fflush(stdout);
-                        
-                        printf("DEBUG: Sending WAIT_YOUR_TURN to player 1...\n");
-                        fflush(stdout);
-                        int r2 = send(match.players[1].fd,"WAIT_YOUR_TURN:#",17,MSG_DONTWAIT);
-                        printf("DEBUG: WAIT_YOUR_TURN result: %d\n", r2);
-                        fflush(stdout);
+                        send(match.players[0].fd,"YOUR_TURN:#",11,0);
+                        send(match.players[1].fd,"WAIT_YOUR_TURN:#",16,0);
                     }
                     else {
-                        send(p->fd,"Waiting for opponent.#",23,0);
+                        send(p->fd,"Waiting for opponent#",21,0);
                     }
                 }
                 else {
-                    send(p->fd,"ERROR:Place all required ships before READY.#",44,0);
+                    send(p->fd,"ERROR:Place all ships first#",29,0);
                 }
 
                 pthread_mutex_unlock(&match.lock);
             }
 
-            // ==========================
-            // FIRE
-            // ==========================
             else if(strncmp(cmd,"FIRE:",5)==0){
                 int x,y;
                 sscanf(cmd+5,"%d,%d",&x,&y);
@@ -384,29 +531,26 @@ void *client_handler(void *arg){
                 x--; y--;
 
                 if(x<0 || y<0 || x>=MAP_SIZE || y>=MAP_SIZE){
-                    send(p->fd,"ERROR:Fire coordinates out of bounds.#",37,0);
+                    send(p->fd,"ERROR:Out of bounds#",20,0);
                     cmd=strtok_r(NULL,"#",&tok_save);
                     continue;
                 }
 
                 pthread_mutex_lock(&match.lock);
 
-                // nếu chưa đến lượt
                 if(id != match.current_turn){
-                    send(p->fd,"WAIT_YOUR_TURN:#",17,0);
+                    send(p->fd,"WAIT_YOUR_TURN:#",16,0);
                     pthread_mutex_unlock(&match.lock);
                 }
                 else {
-                    // kiểm tra đã bắn ô này chưa
                     char already = match.players[id].enemy_map[y][x];
                     if(already=='x' || already=='o' || already=='@'){
-                        send(p->fd,"ERROR:You already fired at this coordinate.#",44,0);
+                        send(p->fd,"ERROR:Already fired#",20,0);
                         pthread_mutex_unlock(&match.lock);
                     }
                     else{
-                        process_fire(&match.players[id], &match.players[1-id], x, y);
+                        process_fire(&match.players[id], &match.players[1-id], x, y, id);
 
-                        // kiểm tra đối thủ còn tàu không
                         int opp_alive=0;
                         for(int s=0;s<match.players[1-id].ship_count;s++){
                             if(match.players[1-id].ships[s].alive){
@@ -416,27 +560,28 @@ void *client_handler(void *arg){
                         }
 
                         if(!opp_alive){
-                            // thắng
+                            int winner_id = match.players[id].user_id;
                             send(match.players[id].fd,"YOU WIN:#",9,0);
                             send(match.players[1-id].fd,"YOU LOSE:#",10,0);
                             send_state(&match.players[0]);
                             send_state(&match.players[1]);
+                            
+                            // Lưu kết quả vào database
+                            save_match_result(winner_id);
+                            
                             pthread_mutex_unlock(&match.lock);
                         }
                         else{
-                            // hit = bắn tiếp
                             if(match.players[id].enemy_map[y][x]=='o'){
-                                send(match.players[id].fd,"HIT_CONTINUE:#",15,0);
+                                send(match.players[id].fd,"HIT_CONTINUE:#",14,0);
                                 send(match.players[1-id].fd,"OPPONENT_HIT_CONTINUE:#",23,0);
                             }
-                            // miss = đổi lượt
                             else{
                                 match.current_turn = 1-id;
                                 send(match.players[match.current_turn].fd,"YOUR_TURN:#",11,0);
-                                send(match.players[1-match.current_turn].fd,"WAIT_YOUR_TURN:#",17,0);
+                                send(match.players[1-match.current_turn].fd,"WAIT_YOUR_TURN:#",16,0);
                             }
 
-                            // cập nhật map 2 bên
                             send_state(&match.players[0]);
                             send_state(&match.players[1]);
                             pthread_mutex_unlock(&match.lock);
@@ -445,20 +590,15 @@ void *client_handler(void *arg){
                 }
             }
 
-            // ==========================
-            // QUIT
-            // ==========================
             else if(strcmp(cmd,"QUIT")==0){
                 printf("DEBUG: Player %d QUIT\n", id);
+                if(p->user_id > 0) db_logout_user(p->user_id);
                 close(p->fd);
                 return NULL;
             }
 
-            // ==========================
-            // LỆNH KHÔNG HỢP LỆ
-            // ==========================
             else {
-                send(p->fd,"ERROR:Unknown command.#",22,0);
+                send(p->fd,"ERROR:Unknown command#",22,0);
             }
 
             cmd = strtok_r(NULL, "#", &tok_save);
@@ -470,22 +610,28 @@ void *client_handler(void *arg){
 }
 
 // ==========================
-// HÀM MAIN – SERVER
+// MAIN
 // ==========================
 int main(){
+    // Khởi tạo database
+    if(db_init() != 0){
+        fprintf(stderr, "Failed to initialize database\n");
+        return 1;
+    }
+    printf("Database initialized successfully\n");
+
     int listenfd, connfd;
     struct sockaddr_in servaddr, cliaddr;
     socklen_t clilen;
 
     match.player_count = 0;
     match.current_turn = 0;
+    match.match_started = 0;
     pthread_mutex_init(&match.lock, NULL);
 
-    // tạo socket
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if(listenfd < 0){ perror("socket"); exit(1); }
 
-    // cấu hình server
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
     servaddr.sin_port = htons(PORT);
@@ -496,7 +642,6 @@ int main(){
     listen(listenfd, 10);
     printf("Server listening at 127.0.0.1:%d\n", PORT);
 
-    // chờ đủ 2 người chơi
     while(match.player_count < MAX_PLAYER){
         clilen = sizeof(cliaddr);
         connfd = accept(listenfd,(struct sockaddr*)&cliaddr,&clilen);
@@ -505,6 +650,10 @@ int main(){
         int id = match.player_count;
 
         match.players[id].fd = connfd;
+        match.players[id].user_id = -1;
+        match.players[id].is_authenticated = 0;
+        strcpy(match.players[id].username, "Guest");
+        
         init_map(match.players[id].map);
         init_map(match.players[id].enemy_map);
         match.players[id].ship_count = 0;
@@ -523,9 +672,9 @@ int main(){
         printf("Player %d connected.\n", id+1);
     }
 
-    // server chạy vô hạn
     while(1) sleep(1);
 
+    db_close();
     close(listenfd);
     return 0;
 }
