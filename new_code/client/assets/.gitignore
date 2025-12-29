@@ -1,0 +1,11 @@
+# Ignore tất cả ảnh và âm thanh (chỉ commit code, không commit assets)
+images/*
+sounds/*
+
+# NHƯNG vẫn giữ thư mục (để git track structure)
+!images/.gitkeep
+!sounds/.gitkeep
+
+# Giữ lại các file README
+!README.md
+!EXAMPLE_USAGE.md

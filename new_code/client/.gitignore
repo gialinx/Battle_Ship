@@ -1,0 +1,6 @@
+# Ignore compiled binary
+client_gui
+
+# Ignore build artifacts
+*.o
+*.out
