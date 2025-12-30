@@ -201,22 +201,62 @@ void render_player_list(SDL_Renderer* renderer, GameData* game) {
     // Title
     render_text(renderer, game->font_small, "ONLINE PLAYERS", list_x + 50, list_y + 10, white);
 
-    // Search box placeholder
+    // Search box
     SDL_SetRenderDrawColor(renderer, 60, 70, 90, 255);
     SDL_Rect search_box = {list_x + 10, list_y + 40, PLAYER_LIST_WIDTH - 20, 30};
     SDL_RenderFillRect(renderer, &search_box);
-    SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
-    SDL_RenderDrawRect(renderer, &search_box);
-    render_text(renderer, game->font_small, "Search...", list_x + 20, list_y + 45, gray);
 
-    // Player list
+    // Border color - highlight if active
+    if(game->player_search_field.is_active) {
+        SDL_SetRenderDrawColor(renderer, 0, 200, 255, 255);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+    }
+    SDL_RenderDrawRect(renderer, &search_box);
+
+    // Display search text or placeholder
+    if(strlen(game->player_search_field.text) > 0) {
+        render_text(renderer, game->font_small, game->player_search_field.text, list_x + 20, list_y + 45, white);
+    } else {
+        render_text(renderer, game->font_small, "Search...", list_x + 20, list_y + 45, gray);
+    }
+
+    // Player list with filtering
     int y = list_y + 90;
     int mx, my;
     SDL_GetMouseState(&mx, &my);
 
-    for(int i = game->scroll_offset; i < game->user_count && i < game->scroll_offset + 8; i++) {
+    // Convert search text to lowercase for case-insensitive search
+    char search_lower[50];
+    strncpy(search_lower, game->player_search_field.text, sizeof(search_lower) - 1);
+    search_lower[sizeof(search_lower) - 1] = '\0';
+    for(int i = 0; search_lower[i]; i++) {
+        if(search_lower[i] >= 'A' && search_lower[i] <= 'Z') {
+            search_lower[i] = search_lower[i] + 32;  // Convert to lowercase
+        }
+    }
+
+    int displayed_count = 0;
+    for(int i = 0; i < game->user_count && displayed_count < 8; i++) {
         UserInfo* u = &game->users[i];
         if(u->user_id == game->my_user_id) continue;
+
+        // Filter by search text (case-insensitive)
+        if(strlen(search_lower) > 0) {
+            char username_lower[50];
+            strncpy(username_lower, u->username, sizeof(username_lower) - 1);
+            username_lower[sizeof(username_lower) - 1] = '\0';
+            for(int j = 0; username_lower[j]; j++) {
+                if(username_lower[j] >= 'A' && username_lower[j] <= 'Z') {
+                    username_lower[j] = username_lower[j] + 32;
+                }
+            }
+
+            // Check if search text is found in username
+            if(strstr(username_lower, search_lower) == NULL) {
+                continue;  // Skip this user
+            }
+        }
 
         SDL_Rect player_rect = {list_x + 5, y, PLAYER_LIST_WIDTH - 10, 60};
 
@@ -243,6 +283,12 @@ void render_player_list(SDL_Renderer* renderer, GameData* game) {
         render_text(renderer, game->font_small, u->status, list_x + 200, y + 25, status_color);
 
         y += 65;
+        displayed_count++;
+    }
+
+    // Show "No results" if search yielded nothing
+    if(displayed_count == 0 && strlen(game->player_search_field.text) > 0) {
+        render_text(renderer, game->font_small, "No players found", list_x + 70, y, gray);
     }
 }
 
@@ -285,13 +331,49 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
         }
     }
 
-    // Player list clicks (invite logic kept from old version)
+    // Search box click
     int list_x = SCREEN_WIDTH - PLAYER_LIST_WIDTH;
+    int search_y = HEADER_HEIGHT + 40;
+    if(x >= list_x + 10 && x <= list_x + PLAYER_LIST_WIDTH - 10 &&
+       y >= search_y && y <= search_y + 30) {
+        game->player_search_field.is_active = 1;
+        SDL_StartTextInput();
+        return;
+    }
+
+    // Player list clicks (with same filtering as render)
     int list_y = HEADER_HEIGHT + 90;
 
-    for(int i = game->scroll_offset; i < game->user_count && i < game->scroll_offset + 8; i++) {
+    // Convert search text to lowercase for filtering
+    char search_lower[50];
+    strncpy(search_lower, game->player_search_field.text, sizeof(search_lower) - 1);
+    search_lower[sizeof(search_lower) - 1] = '\0';
+    for(int i = 0; search_lower[i]; i++) {
+        if(search_lower[i] >= 'A' && search_lower[i] <= 'Z') {
+            search_lower[i] = search_lower[i] + 32;
+        }
+    }
+
+    int displayed_count = 0;
+    for(int i = 0; i < game->user_count && displayed_count < 8; i++) {
         UserInfo* u = &game->users[i];
         if(u->user_id == game->my_user_id) continue;
+
+        // Apply same filter as render
+        if(strlen(search_lower) > 0) {
+            char username_lower[50];
+            strncpy(username_lower, u->username, sizeof(username_lower) - 1);
+            username_lower[sizeof(username_lower) - 1] = '\0';
+            for(int j = 0; username_lower[j]; j++) {
+                if(username_lower[j] >= 'A' && username_lower[j] <= 'Z') {
+                    username_lower[j] = username_lower[j] + 32;
+                }
+            }
+
+            if(strstr(username_lower, search_lower) == NULL) {
+                continue;  // Skip filtered users
+            }
+        }
 
         if(x >= list_x + 5 && x <= list_x + PLAYER_LIST_WIDTH - 5 &&
            y >= list_y && y <= list_y + 60) {
@@ -303,6 +385,12 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
             return;
         }
         list_y += 65;
+        displayed_count++;
+    }
+
+    // Deactivate search if clicking outside the player list panel area
+    if(x < list_x || x > list_x + PLAYER_LIST_WIDTH) {
+        game->player_search_field.is_active = 0;
     }
 }
 

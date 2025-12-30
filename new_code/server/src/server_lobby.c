@@ -173,8 +173,18 @@ void handle_invite(Client* client, char* buffer) {
     pthread_mutex_lock(&clients_lock);
     Client* target = find_client_by_user_id(target_user_id);
 
-    if(target && target->is_authenticated && !target->in_game) {
-        // Send invite to target
+    // Debug logging
+    if(!target) {
+        printf("INVITE DEBUG: User %d not found in clients list\n", target_user_id);
+        send_to_client(client->fd, "INVITE_FAIL:User not available#");
+    } else if(!target->is_authenticated) {
+        printf("INVITE DEBUG: User %d (fd=%d) not authenticated\n", target_user_id, target->fd);
+        send_to_client(client->fd, "INVITE_FAIL:User not available#");
+    } else if(target->in_game) {
+        printf("INVITE DEBUG: User %d (%s) already in game\n", target_user_id, target->username);
+        send_to_client(client->fd, "INVITE_FAIL:User not available#");
+    } else {
+        // All checks passed - send invite
         char msg[256];
         snprintf(msg, sizeof(msg), "INVITE_FROM:%d:%s#",
                  client->user_id, client->username);
@@ -182,13 +192,11 @@ void handle_invite(Client* client, char* buffer) {
 
         // Store who invited whom
         target->invited_by = client->user_id;
-        client->opponent_id = target_user_id;  // Store who was invited by this client
+        client->opponent_id = target_user_id;
 
         send_to_client(client->fd, "INVITE_SENT#");
-        printf("Invite sent from %s (id=%d) to %s (id=%d)\n",
+        printf("✓ Invite sent from %s (id=%d) to %s (id=%d)\n",
                client->username, client->user_id, target->username, target_user_id);
-    } else {
-        send_to_client(client->fd, "INVITE_FAIL:User not available#");
     }
     pthread_mutex_unlock(&clients_lock);
 }

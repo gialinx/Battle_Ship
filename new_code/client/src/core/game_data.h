@@ -106,6 +106,7 @@ typedef struct {
     int user_count;
     int selected_user_index;
     int scroll_offset;
+    unsigned int last_users_update;  // SDL_GetTicks() timestamp for auto-refresh
 
     // Lobby UI
     LobbyTab active_lobby_tab;

@@ -102,7 +102,14 @@ void init_game() {
     game.password_field.is_password = 1;
     game.username_field.is_active = 1;
     game.password_field.is_active = 0;
-    
+
+    // Setup player search field (in lobby)
+    int list_x = SCREEN_WIDTH - 300; // PLAYER_LIST_WIDTH = 300
+    game.player_search_field.rect = (SDL_Rect){list_x + 10, 120, 280, 30};
+    game.player_search_field.is_password = 0;
+    game.player_search_field.is_active = 0;
+    game.player_search_field.text[0] = '\0';
+
     strcpy(game.login_message, "");
     
     // Initialize maps
@@ -121,6 +128,7 @@ void init_game() {
     game.rank = 0;
     game.leaderboard_count = 0;
     game.last_leaderboard_update = 0;
+    game.last_users_update = 0;
     game.match_history_count = 0;
     game.matchmaking_active = 0;
     game.logout_requested = 0;
@@ -297,13 +305,34 @@ void handle_events() {
             }
         }
         
-        if(e.type == SDL_TEXTINPUT && game.state == STATE_LOGIN) {
-            login_screen_handle_text(&game, e.text.text);
+        if(e.type == SDL_TEXTINPUT) {
+            if(game.state == STATE_LOGIN) {
+                login_screen_handle_text(&game, e.text.text);
+            } else if(game.state == STATE_LOBBY && game.player_search_field.is_active) {
+                // Handle search box text input
+                int len = strlen(game.player_search_field.text);
+                if(len < 49) {  // Leave room for null terminator
+                    strcat(game.player_search_field.text, e.text.text);
+                }
+            }
         }
-        
+
         if(e.type == SDL_KEYDOWN) {
             if(game.state == STATE_LOGIN) {
                 login_screen_handle_key(&game, e.key.keysym.sym);
+            } else if(game.state == STATE_LOBBY && game.player_search_field.is_active) {
+                // Handle backspace in search box
+                if(e.key.keysym.sym == SDLK_BACKSPACE) {
+                    int len = strlen(game.player_search_field.text);
+                    if(len > 0) {
+                        game.player_search_field.text[len - 1] = '\0';
+                    }
+                } else if(e.key.keysym.sym == SDLK_ESCAPE) {
+                    // Clear search and deactivate
+                    game.player_search_field.text[0] = '\0';
+                    game.player_search_field.is_active = 0;
+                    SDL_StopTextInput();
+                }
             } else if(game.state == STATE_PLACING_SHIPS) {
                 placing_ships_handle_key(&game, e.key.keysym.sym);
                 if(e.key.keysym.sym == SDLK_q) {
@@ -377,6 +406,7 @@ int main() {
             send_msg("GET_USERS");
             send_msg("GET_LEADERBOARD");
             game.last_leaderboard_update = current_time;
+            game.last_users_update = current_time;
         }
 
         // Auto-refresh leaderboard every 10 seconds when in lobby
@@ -384,6 +414,12 @@ int main() {
             if(current_time - game.last_leaderboard_update >= 10000) {
                 send_msg("GET_LEADERBOARD");
                 game.last_leaderboard_update = current_time;
+            }
+
+            // Auto-refresh player list every 3.5 seconds
+            if(current_time - game.last_users_update >= 3500) {
+                send_msg("GET_USERS");
+                game.last_users_update = current_time;
             }
         }
 

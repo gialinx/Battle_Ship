@@ -266,6 +266,8 @@ int parse_server_message(GameData* game, const char* msg) {
         sscanf(msg, "INVITE_FROM:%d:%[^#]",
                &game->inviter_user_id, game->inviter_username);
         game->state = STATE_RECEIVED_INVITE;
+        printf("✓ CLIENT: Received invite from user_id=%d, username=%s\n",
+               game->inviter_user_id, game->inviter_username);
         return 1;
     }
     if(strncmp(msg, "INVITE_ACCEPTED", 15) == 0) {
