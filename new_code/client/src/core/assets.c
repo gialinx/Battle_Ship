@@ -13,10 +13,12 @@ int assets_init() {
         return 0;
     }
 
-    // Khởi tạo SDL_mixer (hỗ trợ âm thanh)
+    // Khởi tạo SDL_mixer (hỗ trợ âm thanh) - OPTIONAL
     if(Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
-        printf("ERROR: SDL_mixer init failed: %s\n", Mix_GetError());
-        return 0;
+        printf("WARNING: SDL_mixer init failed (audio disabled): %s\n", Mix_GetError());
+        // Không return 0 - game vẫn chạy được không có âm thanh
+    } else {
+        printf("Audio system initialized\n");
     }
 
     printf("Assets system initialized successfully!\n");

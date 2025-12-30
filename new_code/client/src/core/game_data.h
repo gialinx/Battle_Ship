@@ -17,7 +17,8 @@ typedef enum {
     STATE_PROFILE,         // Màn hình profile cá nhân
     STATE_MATCHMAKING,     // Đang tìm trận (matchmaking)
     STATE_MATCH_FOUND,     // Tìm được trận - chờ confirm
-    STATE_WAITING_INVITE,  // Đang chờ phản hồi lời mời
+    STATE_SENDING_INVITE,  // Đang gửi lời mời (chờ server xác nhận)
+    STATE_WAITING_INVITE,  // Đang chờ phản hồi lời mời (đã gửi thành công)
     STATE_RECEIVED_INVITE, // Nhận được lời mời
     STATE_PLACING_SHIPS,   // Đặt tàu
     STATE_WAITING_READY,   // Chờ đối thủ READY

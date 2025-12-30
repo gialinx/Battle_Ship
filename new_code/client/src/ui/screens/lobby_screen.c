@@ -380,7 +380,7 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
             if(strcmp(u->status, "online") == 0) {
                 game->invited_user_id = u->user_id;
                 strcpy(game->invited_username, u->username);
-                game->state = STATE_WAITING_INVITE;
+                game->state = STATE_SENDING_INVITE;  // Changed: Show "Sending..." first
             }
             return;
         }
@@ -424,7 +424,19 @@ void lobby_screen_render_invite_dialog(SDL_Renderer* renderer, GameData* game) {
     SDL_RenderDrawRect(renderer, &close_btn);
     render_text(renderer, game->font_small, "X", close_x + 7, close_y + 2, white);
 
-    if(game->state == STATE_WAITING_INVITE) {
+    if(game->state == STATE_SENDING_INVITE) {
+        render_text(renderer, game->font, "Sending invitation...", 320, 250, cyan);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Sending invite to %s", game->invited_username);
+        render_text(renderer, game->font_small, msg, 300, 300, white);
+
+        // Simple spinner animation
+        unsigned int ticks = SDL_GetTicks();
+        int spinner_frame = (ticks / 200) % 4;
+        const char* spinner_chars[] = {"|", "/", "-", "\\"};
+        render_text(renderer, game->font, spinner_chars[spinner_frame], 480, 350, cyan);
+    }
+    else if(game->state == STATE_WAITING_INVITE) {
         render_text(renderer, game->font, "Waiting for response...", 320, 250, cyan);
         char msg[256];
         snprintf(msg, sizeof(msg), "Invitation sent to %s", game->invited_username);

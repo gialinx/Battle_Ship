@@ -92,6 +92,20 @@ echo ""
 echo "🚀 Khởi động client..."
 echo ""
 
+# Đảm bảo ở đúng thư mục
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Debug
+echo "DEBUG: Current directory: $(pwd)"
+echo "DEBUG: Checking for client_gui..."
+if [ ! -f "./client_gui" ]; then
+    echo "❌ ERROR: client_gui not found in $(pwd)"
+    echo "Files in directory:"
+    ls -la
+    exit 1
+fi
+
 # Chạy client
 ./client_gui
 

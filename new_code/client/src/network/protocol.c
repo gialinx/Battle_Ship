@@ -258,8 +258,27 @@ int parse_server_message(GameData* game, const char* msg) {
 
     // Invite system
     if(strncmp(msg, "INVITE_SENT", 11) == 0) {
+        // Transition from SENDING to WAITING
         game->state = STATE_WAITING_INVITE;
         strcpy(game->message, "Waiting for opponent's response...");
+        printf("✓ CLIENT: Invite sent successfully, now waiting for response\n");
+        return 1;
+    }
+    if(strncmp(msg, "INVITE_FAIL", 11) == 0) {
+        // Failed to send invite - return to lobby with error message
+        game->state = STATE_LOBBY;
+        const char* reason = strchr(msg, ':');
+        if(reason && strlen(reason + 1) > 0) {
+            char error[256];
+            strncpy(error, reason + 1, sizeof(error) - 1);
+            error[sizeof(error) - 1] = '\0';
+            char* hash = strchr(error, '#');
+            if(hash) *hash = '\0';
+            snprintf(game->message, sizeof(game->message), "Invite failed: %s", error);
+        } else {
+            strcpy(game->message, "Failed to send invitation!");
+        }
+        printf("✗ CLIENT: Invite failed - %s\n", game->message);
         return 1;
     }
     if(strncmp(msg, "INVITE_FROM:", 12) == 0) {

@@ -25,6 +25,9 @@
 GameData game;
 pthread_mutex_t game_lock = PTHREAD_MUTEX_INITIALIZER;
 
+// Global variable for server IP
+const char* server_ip = "127.0.0.1"; // Default to localhost
+
 // ==================== INITIALIZE GAME ====================
 void init_game() {
     fprintf(stderr, "DEBUG: Starting SDL_Init...\n");
@@ -133,14 +136,16 @@ void init_game() {
     game.matchmaking_active = 0;
     game.logout_requested = 0;
 
-    // Connect to server
-    game.sockfd = connect_to_server("127.0.0.1", PORT);
+    // Connect to server using configured IP
+    printf("Connecting to server at %s:%d...\n", server_ip, PORT);
+    game.sockfd = connect_to_server(server_ip, PORT);
     if(game.sockfd < 0) {
-        printf("Connection failed!\n");
+        printf("Connection failed to %s:%d!\n", server_ip, PORT);
+        printf("Make sure the server is running and accessible.\n");
         exit(1);
     }
-    
-    printf("Connected to server\n");
+
+    printf("Connected to server at %s:%d\n", server_ip, PORT);
 }
 
 // ==================== SEND TO SERVER ====================
@@ -384,7 +389,17 @@ void render() {
 }
 
 // ==================== MAIN ====================
-int main() {
+int main(int argc, char* argv[]) {
+    // Parse command-line arguments for server IP
+    if(argc >= 2) {
+        server_ip = argv[1];
+        printf("Server IP from command-line: %s\n", server_ip);
+    } else {
+        printf("Using default server IP: %s\n", server_ip);
+        printf("Usage: %s [server_ip]\n", argv[0]);
+        printf("Example: %s 192.168.1.100\n", argv[0]);
+    }
+
     init_game();
 
     // Create receive thread
