@@ -302,18 +302,35 @@ void handle_ready(Client* client) {
     pthread_mutex_unlock(&clients_lock);
 }
 
+// ==================== HANDLE GET_LEADERBOARD ====================
+void handle_get_leaderboard(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+
+    char leaderboard_data[BUFF_SIZE];
+    if(db_get_leaderboard(leaderboard_data, sizeof(leaderboard_data)) == 0) {
+        char response[BUFF_SIZE];
+        snprintf(response, sizeof(response), "LEADERBOARD:%s#", leaderboard_data);
+        send_to_client(client->fd, response);
+    } else {
+        send_to_client(client->fd, "ERROR:Failed to get leaderboard#");
+    }
+}
+
 // ==================== HANDLE LOGOUT ====================
 void handle_logout(Client* client) {
     if(client->user_id > 0) {
         db_logout_user(client->user_id);
         printf("User logged out: %s\n", client->username);
     }
-    
+
     pthread_mutex_lock(&clients_lock);
     client->user_id = -1;
     client->is_authenticated = 0;
     pthread_mutex_unlock(&clients_lock);
-    
+
     send_to_client(client->fd, "LOGOUT_OK#");
 }
 
@@ -359,6 +376,9 @@ void* client_handler(void* arg) {
         }
         else if(strcmp(buffer, "READY#") == 0) {
             handle_ready(client);
+        }
+        else if(strcmp(buffer, "GET_LEADERBOARD#") == 0) {
+            handle_get_leaderboard(client);
         }
         else if(strcmp(buffer, "LOGOUT#") == 0) {
             handle_logout(client);

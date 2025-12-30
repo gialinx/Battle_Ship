@@ -417,6 +417,89 @@ int db_update_score(int user_id, int score_change, int is_win) {
     return (rc == SQLITE_DONE) ? 0 : -1;
 }
 
+// ==================== NEW: LEADERBOARD ====================
+int db_get_leaderboard(char* output, int max_size) {
+    const char* sql = "SELECT username, elo_rating, total_games, wins "
+                      "FROM users ORDER BY elo_rating DESC LIMIT 10";
+    sqlite3_stmt* stmt;
+
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        strcpy(output, "ERROR#");
+        return -1;
+    }
+
+    output[0] = '\0';
+    int rank = 1;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* username = (const char*)sqlite3_column_text(stmt, 0);
+        int elo = sqlite3_column_int(stmt, 1);
+        int games = sqlite3_column_int(stmt, 2);
+        int wins = sqlite3_column_int(stmt, 3);
+
+        char entry[256];
+        snprintf(entry, sizeof(entry), "%d:%s:%d:%d:%d:", rank, username, elo, games, wins);
+        strncat(output, entry, max_size - strlen(output) - 1);
+
+        rank++;
+    }
+
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+// ==================== NEW: MATCH HISTORY ====================
+int db_get_user_match_history(int user_id, char* output, int max_size) {
+    const char* sql =
+        "SELECT m.match_id, "
+        "CASE WHEN m.player1_id = ? THEN u2.username ELSE u1.username END as opponent, "
+        "CASE WHEN m.player1_id = ? THEN m.player1_elo_before ELSE m.player2_elo_before END as my_elo_before, "
+        "CASE WHEN m.player1_id = ? THEN m.player1_elo_after ELSE m.player2_elo_after END as my_elo_after, "
+        "CASE WHEN m.winner_id = ? THEN 1 ELSE 0 END as result, "
+        "datetime(m.played_at, 'localtime') as date "
+        "FROM match_history m "
+        "JOIN users u1 ON m.player1_id = u1.user_id "
+        "JOIN users u2 ON m.player2_id = u2.user_id "
+        "WHERE m.player1_id = ? OR m.player2_id = ? "
+        "ORDER BY m.played_at DESC LIMIT 10";
+
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        strcpy(output, "ERROR#");
+        return -1;
+    }
+
+    sqlite3_bind_int(stmt, 1, user_id);
+    sqlite3_bind_int(stmt, 2, user_id);
+    sqlite3_bind_int(stmt, 3, user_id);
+    sqlite3_bind_int(stmt, 4, user_id);
+    sqlite3_bind_int(stmt, 5, user_id);
+    sqlite3_bind_int(stmt, 6, user_id);
+
+    output[0] = '\0';
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int match_id = sqlite3_column_int(stmt, 0);
+        const char* opponent = (const char*)sqlite3_column_text(stmt, 1);
+        int elo_before = sqlite3_column_int(stmt, 2);
+        int elo_after = sqlite3_column_int(stmt, 3);
+        int result = sqlite3_column_int(stmt, 4);
+        const char* date = (const char*)sqlite3_column_text(stmt, 5);
+
+        int elo_change = elo_after - elo_before;
+
+        char entry[512];
+        snprintf(entry, sizeof(entry), "%d:%s:%d:%d:%d:%d:%s:",
+                match_id, opponent, elo_before, elo_after, elo_change, result, date);
+        strncat(output, entry, max_size - strlen(output) - 1);
+    }
+
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
 void db_close() {
     if (db) {
         sqlite3_close(db);

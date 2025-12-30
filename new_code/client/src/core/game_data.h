@@ -14,6 +14,9 @@
 typedef enum {
     STATE_LOGIN,           // Màn hình đăng nhập/đăng ký
     STATE_LOBBY,           // Màn hình lobby - chọn người chơi
+    STATE_PROFILE,         // Màn hình profile cá nhân
+    STATE_MATCHMAKING,     // Đang tìm trận (matchmaking)
+    STATE_MATCH_FOUND,     // Tìm được trận - chờ confirm
     STATE_WAITING_INVITE,  // Đang chờ phản hồi lời mời
     STATE_RECEIVED_INVITE, // Nhận được lời mời
     STATE_PLACING_SHIPS,   // Đặt tàu
@@ -21,6 +24,13 @@ typedef enum {
     STATE_PLAYING,         // Đang chơi
     STATE_GAME_OVER        // Kết thúc
 } GameState;
+
+// ==================== LOBBY TABS ====================
+typedef enum {
+    LOBBY_TAB_LEADERBOARD,  // Tab bảng xếp hạng
+    LOBBY_TAB_STATS,        // Tab thống kê cá nhân
+    LOBBY_TAB_HISTORY       // Tab lịch sử trận đấu
+} LobbyTab;
 
 // ==================== USER INFO ====================
 typedef struct {
@@ -38,6 +48,26 @@ typedef struct {
     SDL_Rect rect;
     int is_password;
 } InputField;
+
+// ==================== LEADERBOARD ENTRY ====================
+typedef struct {
+    int rank;
+    char username[50];
+    int elo_rating;
+    int total_games;
+    int wins;
+} LeaderboardEntry;
+
+// ==================== MATCH HISTORY ENTRY ====================
+typedef struct {
+    int match_id;
+    char opponent_name[50];
+    int my_elo_before;
+    int my_elo_after;
+    int elo_change;
+    int result;  // 1 = win, 0 = lose
+    char date[50];
+} MatchHistoryEntry;
 
 // ==================== GAME DATA STRUCTURE ====================
 typedef struct {
@@ -76,7 +106,30 @@ typedef struct {
     int user_count;
     int selected_user_index;
     int scroll_offset;
-    
+
+    // Lobby UI
+    LobbyTab active_lobby_tab;
+    InputField player_search_field;
+
+    // Matchmaking
+    int matchmaking_active;           // 1 nếu đang trong hàng chờ
+    char matched_opponent_name[50];   // Tên đối thủ khi tìm được match
+    int matched_opponent_id;          // ID đối thủ
+    int matched_opponent_elo;         // ELO đối thủ
+
+    // Leaderboard data
+    LeaderboardEntry leaderboard[10];
+    int leaderboard_count;
+    unsigned int last_leaderboard_update;  // SDL_GetTicks() timestamp
+
+    // Match history data
+    MatchHistoryEntry match_history[10];
+    int match_history_count;
+
+    // Personal stats
+    int losses;
+    int rank;  // Hạng hiện tại trong leaderboard
+
     // Invite system
     int invited_user_id;
     char invited_username[50];
@@ -99,6 +152,9 @@ typedef struct {
     int preview_valid;
     int ships_placed;
     
+    // Logout flag
+    int logout_requested;
+
     // Gameplay
     int is_my_turn;
     int game_active;

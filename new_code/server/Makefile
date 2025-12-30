@@ -9,11 +9,11 @@ SERVER_LOBBY = server_lobby
 
 all: $(SERVER) $(SERVER_LOBBY)
 
-$(SERVER): server.c src/database.c
-	$(CC) $(CFLAGS) server.c src/database.c -o $(SERVER) $(DB_FLAGS)
+$(SERVER): server.c src/database.c src/matchmaking.c
+	$(CC) $(CFLAGS) server.c src/database.c src/matchmaking.c -o $(SERVER) $(DB_FLAGS)
 
-$(SERVER_LOBBY): src/server_lobby.c src/database.c
-	$(CC) $(CFLAGS) src/server_lobby.c src/database.c -o $(SERVER_LOBBY) $(DB_FLAGS)
+$(SERVER_LOBBY): src/server_lobby.c src/database.c src/matchmaking.c
+	$(CC) $(CFLAGS) src/server_lobby.c src/database.c src/matchmaking.c -o $(SERVER_LOBBY) $(DB_FLAGS)
 
 clean:
 	rm -f $(SERVER) $(SERVER_LOBBY)

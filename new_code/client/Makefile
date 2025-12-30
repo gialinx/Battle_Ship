@@ -12,6 +12,7 @@ $(CLIENT): src/client/client_gui_complete.c \
            src/ui/renderer.c \
            src/ui/screens/login_screen.c \
            src/ui/screens/lobby_screen.c \
+           src/ui/screens/profile_screen.c \
            src/ui/screens/placing_ships_screen.c \
            src/ui/screens/playing_screen.c \
            src/network/protocol.c \
@@ -21,6 +22,7 @@ $(CLIENT): src/client/client_gui_complete.c \
 		src/ui/renderer.c \
 		src/ui/screens/login_screen.c \
 		src/ui/screens/lobby_screen.c \
+		src/ui/screens/profile_screen.c \
 		src/ui/screens/placing_ships_screen.c \
 		src/ui/screens/playing_screen.c \
 		src/network/protocol.c \

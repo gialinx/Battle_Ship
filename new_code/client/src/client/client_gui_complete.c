@@ -13,6 +13,7 @@
 #include "../ui/colors.h"
 #include "../ui/screens/login_screen.h"
 #include "../ui/screens/lobby_screen.h"
+#include "../ui/screens/profile_screen.h"
 #include "../ui/screens/placing_ships_screen.h"
 #include "../ui/screens/playing_screen.h"
 #include "../network/network.h"
@@ -113,7 +114,17 @@ void init_game() {
     
     // Initialize ship placement
     placing_ships_init(&game);
-    
+
+    // Initialize lobby tab
+    game.active_lobby_tab = LOBBY_TAB_LEADERBOARD;
+    game.losses = 0;
+    game.rank = 0;
+    game.leaderboard_count = 0;
+    game.last_leaderboard_update = 0;
+    game.match_history_count = 0;
+    game.matchmaking_active = 0;
+    game.logout_requested = 0;
+
     // Connect to server
     game.sockfd = connect_to_server("127.0.0.1", PORT);
     if(game.sockfd < 0) {
@@ -192,7 +203,10 @@ void handle_events() {
                         strcpy(game.login_message, "Processing...");
                     }
                 }
-            } 
+            }
+            else if(game.state == STATE_PROFILE) {
+                profile_screen_handle_click(&game, x, y);
+            }
             else if(game.state == STATE_LOBBY) {
                 lobby_screen_handle_click(&game, x, y);
                 
@@ -318,17 +332,20 @@ void render() {
     
     if(game.state == STATE_LOGIN) {
         login_screen_render(game.renderer, &game);
-    } 
+    }
     else if(game.state == STATE_LOBBY) {
         lobby_screen_render(game.renderer, &game);
-    } 
+    }
+    else if(game.state == STATE_PROFILE) {
+        profile_screen_render(game.renderer, &game);
+    }
     else if(game.state == STATE_WAITING_INVITE || game.state == STATE_RECEIVED_INVITE) {
         lobby_screen_render(game.renderer, &game);
         lobby_screen_render_invite_dialog(game.renderer, &game);
-    } 
+    }
     else if(game.state == STATE_PLACING_SHIPS) {
         placing_ships_render(game.renderer, &game);
-    } 
+    }
     else if(game.state == STATE_PLAYING || game.state == STATE_GAME_OVER) {
         playing_screen_render(game.renderer, &game);
     }
@@ -340,14 +357,45 @@ void render() {
 // ==================== MAIN ====================
 int main() {
     init_game();
-    
+
     // Create receive thread
     pthread_t tid;
     pthread_create(&tid, NULL, receive_thread, NULL);
     pthread_detach(tid);
-    
+
+    GameState prev_state = STATE_LOGIN;
+
     while(game.running) {
         handle_events();
+
+        unsigned int current_time = SDL_GetTicks();
+
+        // Check for state changes
+        pthread_mutex_lock(&game_lock);
+        if(game.state == STATE_LOBBY && prev_state != STATE_LOBBY) {
+            // Just entered lobby - request users and leaderboard
+            send_msg("GET_USERS");
+            send_msg("GET_LEADERBOARD");
+            game.last_leaderboard_update = current_time;
+        }
+
+        // Auto-refresh leaderboard every 10 seconds when in lobby
+        if(game.state == STATE_LOBBY) {
+            if(current_time - game.last_leaderboard_update >= 10000) {
+                send_msg("GET_LEADERBOARD");
+                game.last_leaderboard_update = current_time;
+            }
+        }
+
+        // Handle logout request
+        if(game.logout_requested) {
+            send_msg("LOGOUT");
+            game.logout_requested = 0;
+        }
+
+        prev_state = game.state;
+        pthread_mutex_unlock(&game_lock);
+
         render();
         SDL_Delay(16); // ~60 FPS
     }

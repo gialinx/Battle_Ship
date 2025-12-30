@@ -1,132 +1,318 @@
-// lobby_screen.c - Lobby screen implementation
+// lobby_screen.c - NEW REDESIGNED LOBBY
 #include "lobby_screen.h"
 #include "../../ui/renderer.h"
 #include "../../ui/colors.h"
 #include <string.h>
 #include <stdio.h>
-#include <SDL2/SDL.h>
 
 #define SCREEN_WIDTH 1000
 #define SCREEN_HEIGHT 700
+#define HEADER_HEIGHT 80
+#define PLAYER_LIST_WIDTH 300
 
-void lobby_screen_render(SDL_Renderer* renderer, GameData* game) {
-    SDL_SetRenderDrawColor(renderer, 20, 30, 50, 255);
-    SDL_RenderClear(renderer);
-    
+// ==================== RENDER FUNCTIONS ====================
+
+// Vẽ header bar (logo + find match + user info)
+void render_header(SDL_Renderer* renderer, GameData* game) {
     SDL_Color white = {255, 255, 255, 255};
     SDL_Color cyan = {0, 200, 255, 255};
-    SDL_Color green = {0, 255, 0, 255};
-    SDL_Color gray = {150, 150, 150, 255};
-    
-    // Header
-    char header[256];
-    snprintf(header, sizeof(header), "Welcome %s! (ELO: %d, Games: %d, Wins: %d)", 
-             game->my_username, game->my_elo, game->total_games, game->wins);
-    render_text(renderer, game->font_small, header, 50, 20, cyan);
-    
-    render_text(renderer, game->font, "ONLINE PLAYERS LIST", 350, 60, white);
-    
-    // User list
-    int y = 120;
+    SDL_Color green = {0, 200, 0, 255};
+
+    // Background header
+    SDL_SetRenderDrawColor(renderer, 30, 40, 60, 255);
+    SDL_Rect header_bg = {0, 0, SCREEN_WIDTH, HEADER_HEIGHT};
+    SDL_RenderFillRect(renderer, &header_bg);
+
+    // Logo (placeholder text)
+    render_text(renderer, game->font, "BATTLESHIP", 20, 25, cyan);
+
+    // Find Match button
     int mx, my;
     SDL_GetMouseState(&mx, &my);
-    
-    for(int i = game->scroll_offset; i < game->user_count && i < game->scroll_offset + 10; i++) {
-        UserInfo* u = &game->users[i];
-        
-        if(u->user_id == game->my_user_id) continue;
-        
-        SDL_Rect user_rect = {50, y, 900, 45};
-        
-        // Background
-        if(i == game->selected_user_index) {
-            SDL_SetRenderDrawColor(renderer, 0, 80, 120, 255);
-        } else {
-            SDL_SetRenderDrawColor(renderer, 40, 50, 70, 255);
+    int find_match_hover = (mx >= 200 && mx <= 400 && my >= 20 && my <= 60);
+
+    render_button(renderer, game->font_small, "FIND MATCH",
+                 200, 20, 200, 40, green, find_match_hover, 1);
+
+    // User info (right side)
+    char user_info[256];
+    snprintf(user_info, sizeof(user_info), "%s", game->my_username);
+    render_text(renderer, game->font_small, user_info, 750, 15, white);
+
+    snprintf(user_info, sizeof(user_info), "ELO: %d", game->my_elo);
+    render_text(renderer, game->font_small, user_info, 750, 45, cyan);
+
+    // Avatar placeholder (circle)
+    SDL_SetRenderDrawColor(renderer, 100, 150, 200, 255);
+    for(int w = 0; w < 50; w++) {
+        for(int h = 0; h < 50; h++) {
+            int dx = w - 25;
+            int dy = h - 25;
+            if((dx*dx + dy*dy) <= (25*25)) {
+                SDL_RenderDrawPoint(renderer, 920 + w, 15 + h);
+            }
         }
-        SDL_RenderFillRect(renderer, &user_rect);
-        
-        SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
-        SDL_RenderDrawRect(renderer, &user_rect);
-        
-        // Username
-        char user_text[256];
-        snprintf(user_text, sizeof(user_text), "%s (ELO: %d)", u->username, u->elo_rating);
-        render_text(renderer, game->font_small, user_text, 60, y + 10, white);
-        
-        // Status
-        SDL_Color status_color = strcmp(u->status, "online") == 0 ? green : gray;
-        render_text(renderer, game->font_small, u->status, 700, y + 10, status_color);
-        
-        // Invite button (only for online users)
-        if(strcmp(u->status, "online") == 0) {
-            int invite_hover = (mx >= 800 && mx <= 920 && my >= y + 5 && my <= y + 40);
-            render_button(renderer, game->font_small, "Invite to play", 800, y + 5, 120, 35, 
-                         (SDL_Color){0, 150, 0, 255}, invite_hover, 1);
-        }
-        
-        y += 50;
     }
-    
-    // Buttons
-    int refresh_hover = (mx >= 50 && mx <= 200 && my >= 620 && my <= 670);
-    int logout_hover = (mx >= 220 && mx <= 370 && my >= 620 && my <= 670);
-    
-    render_button(renderer, game->font_small, "Refresh", 50, 620, 150, 50, 
-                 (SDL_Color){0, 100, 200, 255}, refresh_hover, 1);
-    render_button(renderer, game->font_small, "Logout", 220, 620, 150, 50, 
-                 (SDL_Color){200, 0, 0, 255}, logout_hover, 1);
 }
 
-void lobby_screen_handle_click(GameData* game, int x, int y) {
-    // Refresh button
-    if(x >= 50 && x <= 200 && y >= 620 && y <= 670) {
-        // Will be handled by main client
-        return;
+// Vẽ tabs (Leaderboard / Stats / History)
+void render_tabs(SDL_Renderer* renderer, GameData* game) {
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Color active_color = {0, 100, 200, 255};
+    SDL_Color inactive_color = {60, 70, 90, 255};
+
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+
+    const char* tab_names[] = {"Leaderboard", "Stats", "History"};
+    int tab_width = 150;
+    int tab_height = 40;
+    int start_x = 20;
+    int start_y = HEADER_HEIGHT + 10;
+
+    for(int i = 0; i < 3; i++) {
+        int x = start_x + i * (tab_width + 10);
+        int is_active = (game->active_lobby_tab == i);
+        int is_hover = (mx >= x && mx <= x + tab_width &&
+                       my >= start_y && my <= start_y + tab_height);
+
+        SDL_Color bg_color = is_active ? active_color : inactive_color;
+
+        SDL_Rect tab_rect = {x, start_y, tab_width, tab_height};
+        SDL_SetRenderDrawColor(renderer, bg_color.r, bg_color.g, bg_color.b, 255);
+        SDL_RenderFillRect(renderer, &tab_rect);
+
+        if(is_hover && !is_active) {
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+            SDL_RenderDrawRect(renderer, &tab_rect);
+        }
+
+        render_text(renderer, game->font_small, tab_names[i], x + 20, start_y + 10, white);
     }
-    
-    // Logout button
-    if(x >= 220 && x <= 370 && y >= 620 && y <= 670) {
-        // Will be handled by main client
-        game->state = STATE_LOGIN;
-        memset(&game->username_field.text, 0, sizeof(game->username_field.text));
-        memset(&game->password_field.text, 0, sizeof(game->password_field.text));
-        strcpy(game->login_message, "Logged out");
-        return;
+}
+
+// Vẽ main content area (dựa theo tab được chọn)
+void render_main_content(SDL_Renderer* renderer, GameData* game) {
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Color gray = {150, 150, 150, 255};
+
+    int content_x = 20;
+    int content_y = HEADER_HEIGHT + 60;
+    int content_width = SCREEN_WIDTH - PLAYER_LIST_WIDTH - 40;
+    int content_height = SCREEN_HEIGHT - content_y - 20;
+
+    // Background
+    SDL_SetRenderDrawColor(renderer, 40, 50, 70, 255);
+    SDL_Rect content_bg = {content_x, content_y, content_width, content_height};
+    SDL_RenderFillRect(renderer, &content_bg);
+    SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+    SDL_RenderDrawRect(renderer, &content_bg);
+
+    // Render based on active tab
+    if(game->active_lobby_tab == LOBBY_TAB_LEADERBOARD) {
+        render_text(renderer, game->font, "TOP 10 PLAYERS", content_x + 180, content_y + 20, white);
+
+        if(game->leaderboard_count == 0) {
+            render_text(renderer, game->font_small, "Loading leaderboard...",
+                       content_x + 200, content_y + 80, gray);
+        } else {
+            // Header row
+            int header_y = content_y + 70;
+            render_text(renderer, game->font_small, "Rank", content_x + 30, header_y, gray);
+            render_text(renderer, game->font_small, "Username", content_x + 100, header_y, gray);
+            render_text(renderer, game->font_small, "ELO", content_x + 300, header_y, gray);
+            render_text(renderer, game->font_small, "Games", content_x + 400, header_y, gray);
+            render_text(renderer, game->font_small, "Wins", content_x + 500, header_y, gray);
+
+            // Entries
+            int entry_y = header_y + 40;
+            for(int i = 0; i < game->leaderboard_count && i < 10; i++) {
+                LeaderboardEntry* entry = &game->leaderboard[i];
+                char text[256];
+
+                SDL_Color rank_color = white;
+                if(i == 0) rank_color = (SDL_Color){255, 215, 0, 255};      // Gold
+                else if(i == 1) rank_color = (SDL_Color){192, 192, 192, 255}; // Silver
+                else if(i == 2) rank_color = (SDL_Color){205, 127, 50, 255}; // Bronze
+
+                snprintf(text, sizeof(text), "#%d", entry->rank);
+                render_text(renderer, game->font_small, text, content_x + 30, entry_y, rank_color);
+
+                render_text(renderer, game->font_small, entry->username, content_x + 100, entry_y, white);
+
+                snprintf(text, sizeof(text), "%d", entry->elo_rating);
+                render_text(renderer, game->font_small, text, content_x + 300, entry_y, white);
+
+                snprintf(text, sizeof(text), "%d", entry->total_games);
+                render_text(renderer, game->font_small, text, content_x + 400, entry_y, white);
+
+                snprintf(text, sizeof(text), "%d", entry->wins);
+                render_text(renderer, game->font_small, text, content_x + 500, entry_y, white);
+
+                entry_y += 35;
+            }
+        }
+
+    } else if(game->active_lobby_tab == LOBBY_TAB_STATS) {
+        render_text(renderer, game->font, "YOUR STATISTICS", content_x + 200, content_y + 20, white);
+
+        char stat[256];
+        int y = content_y + 80;
+
+        snprintf(stat, sizeof(stat), "Total Games: %d", game->total_games);
+        render_text(renderer, game->font_small, stat, content_x + 50, y, white);
+        y += 40;
+
+        snprintf(stat, sizeof(stat), "Wins: %d", game->wins);
+        render_text(renderer, game->font_small, stat, content_x + 50, y, white);
+        y += 40;
+
+        snprintf(stat, sizeof(stat), "Losses: %d", game->losses);
+        render_text(renderer, game->font_small, stat, content_x + 50, y, white);
+        y += 40;
+
+        if(game->total_games > 0) {
+            float win_rate = (float)game->wins / game->total_games * 100;
+            snprintf(stat, sizeof(stat), "Win Rate: %.1f%%", win_rate);
+            render_text(renderer, game->font_small, stat, content_x + 50, y, white);
+        }
+
+    } else if(game->active_lobby_tab == LOBBY_TAB_HISTORY) {
+        render_text(renderer, game->font, "MATCH HISTORY", content_x + 200, content_y + 20, white);
+        render_text(renderer, game->font_small, "(History coming soon...)",
+                   content_x + 180, content_y + 60, gray);
     }
-    
-    // User list clicks
-    int list_y = 120;
-    for(int i = game->scroll_offset; i < game->user_count && i < game->scroll_offset + 10; i++) {
+}
+
+// Vẽ player list (bên phải)
+void render_player_list(SDL_Renderer* renderer, GameData* game) {
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Color green = {0, 255, 0, 255};
+    SDL_Color gray = {150, 150, 150, 255};
+
+    int list_x = SCREEN_WIDTH - PLAYER_LIST_WIDTH;
+    int list_y = HEADER_HEIGHT;
+
+    // Background
+    SDL_SetRenderDrawColor(renderer, 35, 45, 65, 255);
+    SDL_Rect list_bg = {list_x, list_y, PLAYER_LIST_WIDTH, SCREEN_HEIGHT - HEADER_HEIGHT};
+    SDL_RenderFillRect(renderer, &list_bg);
+
+    // Title
+    render_text(renderer, game->font_small, "ONLINE PLAYERS", list_x + 50, list_y + 10, white);
+
+    // Search box placeholder
+    SDL_SetRenderDrawColor(renderer, 60, 70, 90, 255);
+    SDL_Rect search_box = {list_x + 10, list_y + 40, PLAYER_LIST_WIDTH - 20, 30};
+    SDL_RenderFillRect(renderer, &search_box);
+    SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+    SDL_RenderDrawRect(renderer, &search_box);
+    render_text(renderer, game->font_small, "Search...", list_x + 20, list_y + 45, gray);
+
+    // Player list
+    int y = list_y + 90;
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+
+    for(int i = game->scroll_offset; i < game->user_count && i < game->scroll_offset + 8; i++) {
         UserInfo* u = &game->users[i];
-        
         if(u->user_id == game->my_user_id) continue;
-        
-        // Select user
-        if(x >= 50 && x <= 950 && y >= list_y && y <= list_y + 45) {
-            game->selected_user_index = i;
-            
-            // Invite button
-            if(x >= 800 && x <= 920 && strcmp(u->status, "online") == 0) {
+
+        SDL_Rect player_rect = {list_x + 5, y, PLAYER_LIST_WIDTH - 10, 60};
+
+        // Hover effect
+        if(mx >= player_rect.x && mx <= player_rect.x + player_rect.w &&
+           my >= player_rect.y && my <= player_rect.y + player_rect.h) {
+            SDL_SetRenderDrawColor(renderer, 60, 80, 110, 255);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 50, 60, 80, 255);
+        }
+        SDL_RenderFillRect(renderer, &player_rect);
+        SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        SDL_RenderDrawRect(renderer, &player_rect);
+
+        // Player info
+        render_text(renderer, game->font_small, u->username, list_x + 15, y + 5, white);
+
+        char elo_text[50];
+        snprintf(elo_text, sizeof(elo_text), "ELO: %d", u->elo_rating);
+        render_text(renderer, game->font_small, elo_text, list_x + 15, y + 25, gray);
+
+        // Status
+        SDL_Color status_color = strcmp(u->status, "online") == 0 ? green : gray;
+        render_text(renderer, game->font_small, u->status, list_x + 200, y + 25, status_color);
+
+        y += 65;
+    }
+}
+
+// ==================== MAIN RENDER ====================
+void lobby_screen_render(SDL_Renderer* renderer, GameData* game) {
+    // Background
+    SDL_SetRenderDrawColor(renderer, 20, 30, 50, 255);
+    SDL_RenderClear(renderer);
+
+    render_header(renderer, game);
+    render_tabs(renderer, game);
+    render_main_content(renderer, game);
+    render_player_list(renderer, game);
+}
+
+// ==================== HANDLE CLICKS ====================
+void lobby_screen_handle_click(GameData* game, int x, int y) {
+    // Avatar click (go to profile)
+    if(x >= 920 && x <= 970 && y >= 15 && y <= 65) {
+        game->state = STATE_PROFILE;
+        return;
+    }
+
+    // Find Match button
+    if(x >= 200 && x <= 400 && y >= 20 && y <= 60) {
+        // TODO: Start matchmaking
+        printf("Find Match clicked!\n");
+        return;
+    }
+
+    // Tabs
+    int tab_y = HEADER_HEIGHT + 10;
+    if(y >= tab_y && y <= tab_y + 40) {
+        for(int i = 0; i < 3; i++) {
+            int tab_x = 20 + i * 160;
+            if(x >= tab_x && x <= tab_x + 150) {
+                game->active_lobby_tab = i;
+                return;
+            }
+        }
+    }
+
+    // Player list clicks (invite logic kept from old version)
+    int list_x = SCREEN_WIDTH - PLAYER_LIST_WIDTH;
+    int list_y = HEADER_HEIGHT + 90;
+
+    for(int i = game->scroll_offset; i < game->user_count && i < game->scroll_offset + 8; i++) {
+        UserInfo* u = &game->users[i];
+        if(u->user_id == game->my_user_id) continue;
+
+        if(x >= list_x + 5 && x <= list_x + PLAYER_LIST_WIDTH - 5 &&
+           y >= list_y && y <= list_y + 60) {
+            if(strcmp(u->status, "online") == 0) {
                 game->invited_user_id = u->user_id;
                 strcpy(game->invited_username, u->username);
                 game->state = STATE_WAITING_INVITE;
-                // Will be handled by main client to send INVITE command
             }
             return;
         }
-        list_y += 50;
+        list_y += 65;
     }
 }
 
+// Keep old invite dialog functions for compatibility
 void lobby_screen_render_invite_dialog(SDL_Renderer* renderer, GameData* game) {
-    // Darken background
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
     SDL_Rect overlay = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
     SDL_RenderFillRect(renderer, &overlay);
 
-    // Dialog box
     SDL_Rect dialog = {250, 200, 500, 300};
     SDL_SetRenderDrawColor(renderer, 40, 50, 70, 255);
     SDL_RenderFillRect(renderer, &dialog);
@@ -135,14 +321,11 @@ void lobby_screen_render_invite_dialog(SDL_Renderer* renderer, GameData* game) {
 
     SDL_Color white = {255, 255, 255, 255};
     SDL_Color cyan = {0, 200, 255, 255};
-    SDL_Color red = {255, 0, 0, 255};
 
     int mx, my;
     SDL_GetMouseState(&mx, &my);
 
-    // X button (close button) at top-right corner
-    int close_x = 720, close_y = 205;
-    int close_size = 25;
+    int close_x = 720, close_y = 205, close_size = 25;
     int close_hover = (mx >= close_x && mx <= close_x + close_size &&
                        my >= close_y && my <= close_y + close_size);
 
@@ -166,7 +349,7 @@ void lobby_screen_render_invite_dialog(SDL_Renderer* renderer, GameData* game) {
     else if(game->state == STATE_RECEIVED_INVITE) {
         render_text(renderer, game->font, "Game invitation!", 340, 250, cyan);
         char msg[256];
-        snprintf(msg, sizeof(msg), "%s wants to play a game with you", game->inviter_username);
+        snprintf(msg, sizeof(msg), "%s wants to play with you", game->inviter_username);
         render_text(renderer, game->font_small, msg, 270, 300, white);
 
         int accept_hover = (mx >= 280 && mx <= 460 && my >= 400 && my <= 450);
@@ -182,36 +365,23 @@ void lobby_screen_render_invite_dialog(SDL_Renderer* renderer, GameData* game) {
 }
 
 void lobby_screen_handle_invite_click(GameData* game, int x, int y) {
-    // X button (close) - works for both states
     int close_x = 720, close_y = 205, close_size = 25;
     if(x >= close_x && x <= close_x + close_size && y >= close_y && y <= close_y + close_size) {
-        if(game->state == STATE_WAITING_INVITE) {
-            game->state = STATE_LOBBY;
-            // Will be handled by main client to send CANCEL_INVITE
-        } else if(game->state == STATE_RECEIVED_INVITE) {
-            game->state = STATE_LOBBY;
-            // Will be handled by main client to send DECLINE_INVITE
-        }
+        game->state = STATE_LOBBY;
         return;
     }
 
     if(game->state == STATE_WAITING_INVITE) {
-        // Cancel button
         if(x >= 400 && x <= 600 && y >= 400 && y <= 450) {
             game->state = STATE_LOBBY;
-            // Will be handled by main client to send CANCEL_INVITE
         }
     }
     else if(game->state == STATE_RECEIVED_INVITE) {
-        // Accept button
         if(x >= 280 && x <= 460 && y >= 400 && y <= 450) {
-            // Will be handled by main client to send ACCEPT_INVITE
+            // Accept handled by main client
         }
-        // Decline button
         else if(x >= 480 && x <= 660 && y >= 400 && y <= 450) {
             game->state = STATE_LOBBY;
-            // Will be handled by main client to send DECLINE_INVITE
         }
     }
 }
-

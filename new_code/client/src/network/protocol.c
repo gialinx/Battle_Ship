@@ -2,6 +2,7 @@
 #include "protocol.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // ==================== PARSE STATE MESSAGE ====================
 int parse_state_message(GameData* game, const char* state_data) {
@@ -205,7 +206,56 @@ int parse_server_message(GameData* game, const char* msg) {
     if(parse_users_list(game, msg)) {
         return 1;
     }
-    
+
+    // Leaderboard
+    if(strncmp(msg, "LEADERBOARD:", 12) == 0) {
+        // Format: LEADERBOARD:rank:username:elo:games:wins:rank:username:elo:games:wins:...
+        const char* data = msg + 12;
+        game->leaderboard_count = 0;
+
+        char temp[BUFF_SIZE];
+        strncpy(temp, data, sizeof(temp) - 1);
+        temp[sizeof(temp) - 1] = '\0';
+
+        // Remove trailing '#' if present
+        char* hash = strchr(temp, '#');
+        if(hash) *hash = '\0';
+
+        char* saveptr = NULL;
+        char* token = strtok_r(temp, ":", &saveptr);
+
+        while(token && game->leaderboard_count < 10) {
+            LeaderboardEntry* entry = &game->leaderboard[game->leaderboard_count];
+
+            // Parse rank:username:elo:games:wins
+            entry->rank = atoi(token);
+
+            token = strtok_r(NULL, ":", &saveptr);
+            if(!token) break;
+            strncpy(entry->username, token, sizeof(entry->username) - 1);
+
+            token = strtok_r(NULL, ":", &saveptr);
+            if(!token) break;
+            entry->elo_rating = atoi(token);
+
+            token = strtok_r(NULL, ":", &saveptr);
+            if(!token) break;
+            entry->total_games = atoi(token);
+
+            token = strtok_r(NULL, ":", &saveptr);
+            if(!token) break;
+            entry->wins = atoi(token);
+
+            game->leaderboard_count++;
+
+            // Move to next entry
+            token = strtok_r(NULL, ":", &saveptr);
+        }
+
+        printf("Leaderboard loaded: %d entries\n", game->leaderboard_count);
+        return 1;
+    }
+
     // Invite system
     if(strncmp(msg, "INVITE_SENT", 11) == 0) {
         game->state = STATE_WAITING_INVITE;
@@ -308,7 +358,26 @@ int parse_server_message(GameData* game, const char* msg) {
         snprintf(game->message, sizeof(game->message), "READY! Waiting for opponent...");
         return 1;
     }
-    
+
+    // Logout
+    if(strncmp(msg, "LOGOUT_OK", 9) == 0) {
+        // Clear session data
+        game->state = STATE_LOGIN;
+        game->my_user_id = -1;
+        game->my_username[0] = '\0';
+        game->my_elo = 0;
+        game->total_games = 0;
+        game->wins = 0;
+        game->losses = 0;
+
+        // Clear input fields
+        game->username_field.text[0] = '\0';
+        game->password_field.text[0] = '\0';
+
+        strcpy(game->login_message, "Logged out successfully. Please login again.");
+        return 1;
+    }
+
     return 0;
 }
 

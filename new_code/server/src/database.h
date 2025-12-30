@@ -49,9 +49,14 @@ int db_save_match(MatchHistory* match);
 int db_get_match_history(int user_id, MatchHistory** matches, int* count);
 int db_get_match_for_rewatch(int match_id, MatchHistory* match);
 int db_update_score(int user_id, int score_change, int is_win);
-int calculate_elo_change(int player_elo, int opponent_elo, int total_games, 
+int calculate_elo_change(int player_elo, int opponent_elo, int total_games,
                          float hit_diff, float accuracy, int is_winner);
 void db_update_elo_after_match(MatchHistory* match);
+
+// New functions for lobby redesign
+int db_get_leaderboard(char* output, int max_size);  // Returns formatted string
+int db_get_user_match_history(int user_id, char* output, int max_size);  // Returns formatted string
+
 void db_close();
 
 #endif
