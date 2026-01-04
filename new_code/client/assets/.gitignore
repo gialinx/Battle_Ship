@@ -1,10 +1,9 @@
-# Ignore tất cả ảnh và âm thanh (chỉ commit code, không commit assets)
-images/*
-sounds/*
+# Cho phép commit ảnh và âm thanh
+# (Đã bỏ ignore để push assets lên GitHub)
 
-# NHƯNG vẫn giữ thư mục (để git track structure)
-!images/.gitkeep
-!sounds/.gitkeep
+# Chỉ ignore các file tạm thời nếu có
+*.tmp
+*.bak
 
 # Giữ lại các file README
 !README.md
