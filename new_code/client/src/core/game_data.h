@@ -23,7 +23,9 @@ typedef enum {
     STATE_PLACING_SHIPS,   // Đặt tàu
     STATE_WAITING_READY,   // Chờ đối thủ READY
     STATE_PLAYING,         // Đang chơi
-    STATE_GAME_OVER        // Kết thúc
+    STATE_GAME_OVER,       // Kết thúc
+    STATE_MATCH_HISTORY,   // Xem lịch sử các trận
+    STATE_MATCH_DETAIL     // Xem chi tiết một trận
 } GameState;
 
 // ==================== LOBBY TABS ====================
@@ -63,13 +65,40 @@ typedef struct {
 // ==================== MATCH HISTORY ENTRY ====================
 typedef struct {
     int match_id;
+    int opponent_id;
     char opponent_name[50];
     int my_elo_before;
     int my_elo_after;
     int elo_change;
     int result;  // 1 = win, 0 = lose
     char date[50];
+    int my_hits;
+    int my_misses;
+    int opponent_hits;
+    int opponent_misses;
+    int duration_seconds;
 } MatchHistoryEntry;
+
+// ==================== SHOT HISTORY ====================
+typedef struct {
+    int x, y;
+    int hit;           // 1 = hit, 0 = miss
+    int ship_length;   // Length of ship hit (0 if miss)
+    int ship_sunk;     // 1 if ship was sunk with this shot
+} ShotEntry;
+
+// ==================== MATCH DETAIL ====================
+typedef struct {
+    int match_id;
+    char my_name[50];
+    char opponent_name[50];
+    ShotEntry my_shots[100];
+    int my_shot_count;
+    ShotEntry opponent_shots[100];
+    int opponent_shot_count;
+    int winner;  // 1 = me, 0 = opponent
+    char date[50];
+} MatchDetail;
 
 // ==================== GAME DATA STRUCTURE ====================
 typedef struct {
@@ -129,6 +158,10 @@ typedef struct {
     // Match history data
     MatchHistoryEntry match_history[10];
     int match_history_count;
+    
+    // Match detail data
+    MatchDetail current_match_detail;
+    int viewing_match_id;  // ID of match being viewed in detail
 
     // Personal stats
     int losses;

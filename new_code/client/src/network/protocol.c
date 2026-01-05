@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 // ==================== PARSE STATE MESSAGE ====================
 int parse_state_message(GameData* game, const char* state_data) {
@@ -522,6 +523,147 @@ int parse_server_message(GameData* game, const char* msg) {
         return 1;
     }
 
+    // Match history
+    if(strncmp(msg, "MATCH_HISTORY:", 14) == 0) {
+        // Format: MATCH_HISTORY:count|match1_data|match2_data|...
+        // match_data: match_id,timestamp,opponent_id,opponent_name,is_win,hits,misses,elo_change,duration
+        
+        printf("DEBUG: Parsing MATCH_HISTORY message: %s\n", msg);
+        
+        const char* data = msg + 14;
+        int count = 0;
+        sscanf(data, "%d", &count);
+        
+        printf("DEBUG: Match count from server: %d\n", count);
+        
+        game->match_history_count = 0;
+        
+        // Skip count and first '|'
+        const char* ptr = strchr(data, '|');
+        if(!ptr) {
+            printf("DEBUG: No pipe separator found, empty history\n");
+            return 1;
+        }
+        ptr++; // Skip '|'
+        
+        char temp[BUFF_SIZE * 2];
+        strncpy(temp, ptr, sizeof(temp) - 1);
+        temp[sizeof(temp) - 1] = '\0';
+        
+        printf("DEBUG: Match data to parse: %s\n", temp);
+        
+        // Parse each match entry separated by '|'
+        char* saveptr = NULL;
+        char* token = strtok_r(temp, "|", &saveptr);
+        
+        while(token && game->match_history_count < 10) {
+            MatchHistoryEntry* entry = &game->match_history[game->match_history_count];
+            
+            printf("DEBUG: Parsing token: %s\n", token);
+            
+            // Parse: match_id,timestamp,opponent_id,opponent_name,is_win,hits,misses,elo_change,duration
+            long timestamp;
+            int is_win, hits, misses;
+            int parsed = sscanf(token, "%d,%ld,%d,%49[^,],%d,%d,%d,%d,%d",
+                               &entry->match_id, &timestamp, 
+                               &entry->opponent_id, entry->opponent_name,
+                               &is_win, &hits, &misses,
+                               &entry->elo_change, &entry->duration_seconds);
+            
+            printf("DEBUG: Parsed %d fields\n", parsed);
+            
+            if(parsed == 9) {
+                entry->result = is_win;
+                entry->my_hits = hits;
+                entry->my_misses = misses;
+                
+                // Convert timestamp to date string
+                time_t t = (time_t)timestamp;
+                struct tm* tm_info = localtime(&t);
+                strftime(entry->date, sizeof(entry->date), "%Y-%m-%d %H:%M", tm_info);
+                
+                printf("DEBUG: Successfully parsed match %d - %s vs %s\n", 
+                       entry->match_id, "You", entry->opponent_name);
+                
+                game->match_history_count++;
+            }
+            
+            token = strtok_r(NULL, "|", &saveptr);
+        }
+        
+        printf("CLIENT: Match history loaded: %d entries\n", game->match_history_count);
+        return 1;
+    }
+
+    // Match detail
+    if(strncmp(msg, "MATCH_DETAIL:", 13) == 0) {
+        // Format: MATCH_DETAIL:match_id:match_data
+        // match_data contains shot history (alternating between players)
+        // For now, just store the raw match_data string
+        
+        int match_id = 0;
+        char match_data[4096] = {0};
+        
+        sscanf(msg + 13, "%d:%4095[^#]", &match_id, match_data);
+        
+        // Parse match_data into shot entries
+        // Format: x,y,hit,ship_len,sunk;x,y,hit,ship_len,sunk;...
+        // Alternating: my shot, opponent shot, my shot, opponent shot, ...
+        
+        game->current_match_detail.match_id = match_id;
+        game->current_match_detail.my_shot_count = 0;
+        game->current_match_detail.opponent_shot_count = 0;
+        
+        if(strlen(match_data) > 0) {
+            char temp[4096];
+            strncpy(temp, match_data, sizeof(temp) - 1);
+            temp[sizeof(temp) - 1] = '\0';
+            
+            char* saveptr = NULL;
+            char* token = strtok_r(temp, ";", &saveptr);
+            int shot_index = 0;
+            
+            while(token) {
+                int x, y, hit, ship_len, sunk;
+                if(sscanf(token, "%d,%d,%d,%d,%d", &x, &y, &hit, &ship_len, &sunk) == 5) {
+                    // Alternate between my shots and opponent shots
+                    if(shot_index % 2 == 0) {
+                        // My shot
+                        if(game->current_match_detail.my_shot_count < 100) {
+                            ShotEntry* shot = &game->current_match_detail.my_shots[game->current_match_detail.my_shot_count];
+                            shot->x = x;
+                            shot->y = y;
+                            shot->hit = hit;
+                            shot->ship_length = ship_len;
+                            shot->ship_sunk = sunk;
+                            game->current_match_detail.my_shot_count++;
+                        }
+                    } else {
+                        // Opponent shot
+                        if(game->current_match_detail.opponent_shot_count < 100) {
+                            ShotEntry* shot = &game->current_match_detail.opponent_shots[game->current_match_detail.opponent_shot_count];
+                            shot->x = x;
+                            shot->y = y;
+                            shot->hit = hit;
+                            shot->ship_length = ship_len;
+                            shot->ship_sunk = sunk;
+                            game->current_match_detail.opponent_shot_count++;
+                        }
+                    }
+                }
+                shot_index++;
+                token = strtok_r(NULL, ";", &saveptr);
+            }
+        }
+        
+        // Transition to detail screen
+        game->state = STATE_MATCH_DETAIL;
+        
+        printf("CLIENT: Match detail loaded: match_id=%d, my_shots=%d, opponent_shots=%d\n", 
+               match_id, game->current_match_detail.my_shot_count, 
+               game->current_match_detail.opponent_shot_count);
+        return 1;
+    }
+
     return 0;
 }
-

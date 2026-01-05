@@ -35,6 +35,12 @@ void render_header(SDL_Renderer* renderer, GameData* game) {
 
     render_button(renderer, game->font_small, "FIND MATCH",
                  200, 20, 200, 40, green, find_match_hover, 1);
+    
+    // Match History button
+    // int history_hover = (mx >= 410 && mx <= 590 && my >= 20 && my <= 60);
+    // SDL_Color purple = {150, 100, 255, 255};
+    // render_button(renderer, game->font_small, "MATCH HISTORY",
+    //              410, 20, 180, 40, purple, history_hover, 1);
 
     // User info (right side)
     char user_info[256];
@@ -180,9 +186,119 @@ void render_main_content(SDL_Renderer* renderer, GameData* game) {
         }
 
     } else if(game->active_lobby_tab == LOBBY_TAB_HISTORY) {
-        render_text(renderer, game->font, "MATCH HISTORY", content_x + 200, content_y + 20, white);
-        render_text(renderer, game->font_small, "(History coming soon...)",
-                   content_x + 180, content_y + 60, gray);
+        render_text(renderer, game->font, "MATCH HISTORY", content_x + 180, content_y + 10, white);
+        
+        // Display match history entries
+        if(game->match_history_count == 0) {
+            render_text(renderer, game->font_small, "No matches played yet",
+                       content_x + 180, content_y + 150, gray);
+        } else {
+            // Column headers background
+            SDL_Rect header_bg = {content_x + 10, content_y + 55, 580, 30};
+            SDL_SetRenderDrawColor(renderer, 35, 45, 65, 255);
+            SDL_RenderFillRect(renderer, &header_bg);
+            
+            // Column headers
+            int header_y = content_y + 62;
+            render_text(renderer, game->font_small, "DATE", content_x + 15, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "OPPONENT", content_x + 85, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "RESULT", content_x + 195, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "HIT", content_x + 270, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "MISS", content_x + 325, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "ACC%", content_x + 385, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "ELO", content_x + 450, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "VIEW", content_x + 530, header_y, (SDL_Color){200, 200, 200, 255});
+            
+            // Get mouse position for hover
+            int mx, my;
+            SDL_GetMouseState(&mx, &my);
+            
+            // Match entries (show up to 7 matches)
+            int entry_y = content_y + 92;
+            for(int i = 0; i < game->match_history_count && i < 7; i++) {
+                MatchHistoryEntry* m = &game->match_history[i];
+                
+                // Row background (alternating colors)
+                SDL_Rect row_bg = {content_x + 10, entry_y - 5, 580, 40};
+                int is_hover = (mx >= row_bg.x && mx <= row_bg.x + row_bg.w &&
+                               my >= row_bg.y && my <= row_bg.y + row_bg.h);
+                
+                if(is_hover) {
+                    SDL_SetRenderDrawColor(renderer, 45, 55, 75, 255);
+                } else if(i % 2 == 0) {
+                    SDL_SetRenderDrawColor(renderer, 30, 40, 60, 255);
+                } else {
+                    SDL_SetRenderDrawColor(renderer, 25, 35, 55, 255);
+                }
+                SDL_RenderFillRect(renderer, &row_bg);
+                
+                // Border line
+                SDL_SetRenderDrawColor(renderer, 50, 60, 80, 255);
+                SDL_RenderDrawRect(renderer, &row_bg);
+                
+                // Date (short format MM-DD HH:MM)
+                char date_short[20];
+                if(strlen(m->date) >= 16) {
+                    snprintf(date_short, sizeof(date_short), "%c%c-%c%c %c%c:%c%c",
+                            m->date[5], m->date[6], m->date[8], m->date[9],
+                            m->date[11], m->date[12], m->date[14], m->date[15]);
+                } else {
+                    strcpy(date_short, "--");
+                }
+                render_text(renderer, game->font_small, date_short, content_x + 15, entry_y, white);
+                
+                // Opponent
+                char opp[20];
+                snprintf(opp, sizeof(opp), "%.10s", m->opponent_name);
+                render_text(renderer, game->font_small, opp, content_x + 85, entry_y, (SDL_Color){100, 200, 255, 255});
+                
+                // Result
+                SDL_Color result_color = m->result ? (SDL_Color){50, 255, 100, 255} : (SDL_Color){255, 100, 100, 255};
+                render_text(renderer, game->font_small, m->result ? "WIN" : "LOSS", 
+                           content_x + 195, entry_y, result_color);
+                
+                // HIT
+                char hit_str[10];
+                snprintf(hit_str, sizeof(hit_str), "%d", m->my_hits);
+                render_text(renderer, game->font_small, hit_str, content_x + 275, entry_y, (SDL_Color){100, 255, 150, 255});
+                
+                // MISS
+                char miss_str[10];
+                snprintf(miss_str, sizeof(miss_str), "%d", m->my_misses);
+                render_text(renderer, game->font_small, miss_str, content_x + 330, entry_y, (SDL_Color){255, 150, 100, 255});
+                
+                // Accuracy %
+                int total = m->my_hits + m->my_misses;
+                float acc = total > 0 ? (float)m->my_hits * 100 / total : 0;
+                char acc_str[10];
+                snprintf(acc_str, sizeof(acc_str), "%.0f%%", acc);
+                render_text(renderer, game->font_small, acc_str, content_x + 385, entry_y, (SDL_Color){200, 200, 100, 255});
+                
+                // ELO change
+                char elo[20];
+                snprintf(elo, sizeof(elo), "%+d", m->elo_change);
+                SDL_Color elo_color = m->elo_change > 0 ? (SDL_Color){50, 255, 100, 255} : (SDL_Color){255, 100, 100, 255};
+                render_text(renderer, game->font_small, elo, content_x + 450, entry_y, elo_color);
+                
+                // View Details button with icon
+                SDL_Rect detail_btn = {content_x + 520, entry_y - 3, 50, 25};
+                int btn_hover = (mx >= detail_btn.x && mx <= detail_btn.x + detail_btn.w &&
+                                my >= detail_btn.y && my <= detail_btn.y + detail_btn.h);
+                
+                SDL_SetRenderDrawColor(renderer, 
+                                      btn_hover ? 80 : 60,
+                                      btn_hover ? 120 : 100,
+                                      btn_hover ? 200 : 180, 255);
+                SDL_RenderFillRect(renderer, &detail_btn);
+                SDL_SetRenderDrawColor(renderer, 100, 150, 220, 255);
+                SDL_RenderDrawRect(renderer, &detail_btn);
+                // Use simple ASCII arrow instead of emoji
+                render_text_centered(renderer, game->font_small, ">>", 
+                                   detail_btn.x + detail_btn.w/2, detail_btn.y + 6, white);
+                
+                entry_y += 45;
+            }
+        }
     }
 }
 
@@ -332,7 +448,7 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
     }
 
     // Find Match button
-    if(x >= 200 && x <= 400 && y >= 20 && y <= 60) {
+    if(x >= 250 && x <= 450 && y >= 20 && y <= 60) {
         // Start matchmaking
         printf("Find Match clicked!\n");
         
@@ -345,10 +461,8 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
         snprintf(buffer, sizeof(buffer), "FIND_MATCH#");
         send(game->sockfd, buffer, strlen(buffer), 0);
         printf("CLIENT: Sent FIND_MATCH to server\n");
-        
         return;
     }
-
     // Tabs
     int tab_y = HEADER_HEIGHT + 10;
     if(y >= tab_y && y <= tab_y + 40) {
@@ -356,8 +470,39 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
             int tab_x = 20 + i * 160;
             if(x >= tab_x && x <= tab_x + 150) {
                 game->active_lobby_tab = i;
+                
+                // If switching to History tab, request match history
+                if(i == LOBBY_TAB_HISTORY) {
+                    char buffer[256];
+                    snprintf(buffer, sizeof(buffer), "GET_MATCH_HISTORY#");
+                    send(game->sockfd, buffer, strlen(buffer), 0);
+                    printf("CLIENT: Switched to History tab, requesting match history\n");
+                }
+                
                 return;
             }
+        }
+    }
+    
+    // Details button in History tab
+    if(game->active_lobby_tab == LOBBY_TAB_HISTORY) {
+        int content_x = 29;
+        int content_y = 155;
+        int entry_y = content_y + 92;
+        
+        for(int i = 0; i < game->match_history_count && i < 7; i++) {
+            SDL_Rect detail_btn = {content_x + 520, entry_y - 3, 50, 25};
+            if(x >= detail_btn.x && x <= detail_btn.x + detail_btn.w &&
+               y >= detail_btn.y && y <= detail_btn.y + detail_btn.h) {
+                // Send request for match details
+                MatchHistoryEntry* m = &game->match_history[i];
+                char buffer[256];
+                snprintf(buffer, sizeof(buffer), "GET_MATCH_DETAIL:%d#", m->match_id);
+                send(game->sockfd, buffer, strlen(buffer), 0);
+                printf("CLIENT: Requesting details for match %d\n", m->match_id);
+                return;
+            }
+            entry_y += 45;
         }
     }
 

@@ -20,6 +20,8 @@
 #include "../ui/screens/placing_ships_screen.h"
 #include "../ui/screens/playing_screen.h"
 #include "../ui/screens/game_over_screen.h"
+#include "../ui/screens/match_history_screen.h"
+#include "../ui/screens/match_detail_screen.h"
 #include "../network/network.h"
 #include "../network/protocol.h"
 
@@ -285,6 +287,12 @@ void handle_events() {
             else if(game.state == STATE_GAME_OVER) {
                 game_over_screen_handle_click(&game, x, y);
             }
+            else if(game.state == STATE_MATCH_HISTORY) {
+                match_history_screen_handle_click(x, y, &game);
+            }
+            else if(game.state == STATE_MATCH_DETAIL) {
+                match_detail_screen_handle_click(x, y, &game);
+            }
         }
         
         if(e.type == SDL_TEXTINPUT) {
@@ -372,6 +380,12 @@ void render() {
     }
     else if(game.state == STATE_GAME_OVER) {
         game_over_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_MATCH_HISTORY) {
+        match_history_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_MATCH_DETAIL) {
+        match_detail_screen_render(game.renderer, &game);
     }
     
     pthread_mutex_unlock(&game_lock);
