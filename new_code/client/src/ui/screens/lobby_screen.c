@@ -316,8 +316,19 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
 
     // Find Match button
     if(x >= 200 && x <= 400 && y >= 20 && y <= 60) {
-        // TODO: Start matchmaking
+        // Start matchmaking
         printf("Find Match clicked!\n");
+        
+        game->state = STATE_MATCHMAKING;
+        game->matchmaking_active = 1;
+        game->matchmaking_start_time = SDL_GetTicks();
+        
+        // Send FIND_MATCH to server
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer), "FIND_MATCH#");
+        send(game->sockfd, buffer, strlen(buffer), 0);
+        printf("CLIENT: Sent FIND_MATCH to server\n");
+        
         return;
     }
 

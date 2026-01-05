@@ -445,6 +445,44 @@ int parse_server_message(GameData* game, const char* msg) {
         return 1;
     }
 
+    // Matchmaking
+    if(strncmp(msg, "MM_JOINED", 9) == 0) {
+        printf("CLIENT: Joined matchmaking queue\n");
+        return 1;
+    }
+    if(strncmp(msg, "MM_CANCELLED", 12) == 0) {
+        game->state = STATE_LOBBY;
+        game->matchmaking_active = 0;
+        printf("CLIENT: Matchmaking cancelled\n");
+        return 1;
+    }
+    if(strncmp(msg, "MATCH_FOUND:", 12) == 0) {
+        // Format: MATCH_FOUND:opponent_name:opponent_elo
+        char opponent_name[50];
+        int opponent_elo = 0;
+        
+        sscanf(msg + 12, "%[^:]:%d", opponent_name, &opponent_elo);
+        
+        strcpy(game->matched_opponent_name, opponent_name);
+        game->matched_opponent_elo = opponent_elo;
+        game->matchmaking_active = 0;
+        
+        // Transition to placing ships
+        game->state = STATE_PLACING_SHIPS;
+        
+        snprintf(game->message, sizeof(game->message), 
+                "Match found! vs %s (ELO: %d)", opponent_name, opponent_elo);
+        printf("CLIENT: Match found! Opponent: %s (ELO: %d)\n", opponent_name, opponent_elo);
+        return 1;
+    }
+    if(strncmp(msg, "MM_ERROR", 8) == 0) {
+        game->state = STATE_LOBBY;
+        game->matchmaking_active = 0;
+        strcpy(game->message, "Matchmaking error!");
+        printf("CLIENT: Matchmaking error\n");
+        return 1;
+    }
+
     return 0;
 }
 

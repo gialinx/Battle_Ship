@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include "database.h"
+#include "matchmaking.h"
 
 #define PORT 5501
 #define MAX_CLIENTS 50
@@ -770,6 +771,12 @@ void handle_logout(Client* client) {
     if(client->user_id > 0) {
         db_logout_user(client->user_id);
         printf("User logged out: %s\n", client->username);
+        
+        // Remove from matchmaking queue if in queue
+        if(mm_is_in_queue(client->user_id)) {
+            mm_remove_player(client->user_id);
+            printf("[MM] Player %s removed from queue (logout)\n", client->username);
+        }
     }
 
     pthread_mutex_lock(&clients_lock);
@@ -778,6 +785,50 @@ void handle_logout(Client* client) {
     pthread_mutex_unlock(&clients_lock);
 
     send_to_client(client->fd, "LOGOUT_OK#");
+}
+
+// ==================== HANDLE FIND_MATCH ====================
+void handle_find_match(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    // Get user profile for ELO and total_games
+    UserProfile profile;
+    if(db_get_user_profile(client->user_id, &profile) != 0) {
+        send_to_client(client->fd, "MM_ERROR:Failed to get profile#");
+        return;
+    }
+    
+    // Add to matchmaking queue
+    int result = mm_add_player(client->user_id, profile.username, 
+                                profile.elo_rating, profile.total_games);
+    
+    if(result == 0) {
+        send_to_client(client->fd, "MM_JOINED#");
+        printf("[MM] Player %s joined matchmaking queue (ELO:%d, Games:%d)\n", 
+               profile.username, profile.elo_rating, profile.total_games);
+    } else {
+        send_to_client(client->fd, "MM_ERROR:Already in queue#");
+    }
+}
+
+// ==================== HANDLE CANCEL_MATCH ====================
+void handle_cancel_match(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    int result = mm_remove_player(client->user_id);
+    
+    if(result == 0) {
+        send_to_client(client->fd, "MM_CANCELLED#");
+        printf("[MM] Player %s cancelled matchmaking\n", client->username);
+    } else {
+        send_to_client(client->fd, "MM_ERROR:Not in queue#");
+    }
 }
 
 // ==================== CLIENT HANDLER ====================
@@ -798,53 +849,77 @@ void* client_handler(void* arg) {
         buffer[n] = '\0';
         printf("RECEIVED from fd=%d: %s\n", client->fd, buffer);
         
-        // Parse commands
-        if(strncmp(buffer, "REGISTER:", 9) == 0) {
-            handle_register(client, buffer);
-        }
-        else if(strncmp(buffer, "LOGIN:", 6) == 0) {
-            handle_login(client, buffer);
-        }
-        else if(strcmp(buffer, "GET_USERS#") == 0) {
-            handle_get_users(client);
-        }
-        else if(strcmp(buffer, "GET_MY_STATS#") == 0) {
-            handle_get_my_stats(client);
-        }
-        else if(strncmp(buffer, "INVITE:", 7) == 0) {
-            handle_invite(client, buffer);
-        }
-        else if(strncmp(buffer, "ACCEPT_INVITE:", 14) == 0) {
-            handle_accept_invite(client, buffer);
-        }
-        else if(strncmp(buffer, "DECLINE_INVITE:", 15) == 0) {
-            handle_decline_invite(client, buffer);
-        }
-        else if(strcmp(buffer, "CANCEL_INVITE#") == 0) {
-            handle_cancel_invite(client);
-        }
-        else if(strncmp(buffer, "PLACE:", 6) == 0) {
-            handle_place(client, buffer);
-        }
-        else if(strcmp(buffer, "READY#") == 0) {
-            handle_ready(client);
-        }
-        else if(strncmp(buffer, "FIRE:", 5) == 0) {
-            handle_fire(client, buffer);
-        }
-        else if(strcmp(buffer, "GET_LEADERBOARD#") == 0) {
-            handle_get_leaderboard(client);
-        }
-        else if(strcmp(buffer, "LOGOUT#") == 0) {
-            handle_logout(client);
-        }
-        else {
-            send_to_client(client->fd, "ERROR:Unknown command#");
+        // Split buffer by '#' to handle multiple commands in one packet
+        char buffer_copy[BUFF_SIZE];
+        strncpy(buffer_copy, buffer, BUFF_SIZE - 1);
+        buffer_copy[BUFF_SIZE - 1] = '\0';
+        
+        char* saveptr = NULL;
+        char* token = strtok_r(buffer_copy, "#", &saveptr);
+        
+        while(token != NULL) {
+            // Add '#' back for strcmp compatibility
+            char cmd[BUFF_SIZE];
+            snprintf(cmd, sizeof(cmd), "%s#", token);
+            
+            // Parse commands
+            if(strncmp(cmd, "REGISTER:", 9) == 0) {
+                handle_register(client, cmd);
+            }
+            else if(strncmp(cmd, "LOGIN:", 6) == 0) {
+                handle_login(client, cmd);
+            }
+            else if(strcmp(cmd, "GET_USERS#") == 0) {
+                handle_get_users(client);
+            }
+            else if(strcmp(cmd, "GET_MY_STATS#") == 0) {
+                handle_get_my_stats(client);
+            }
+            else if(strncmp(cmd, "INVITE:", 7) == 0) {
+                handle_invite(client, cmd);
+            }
+            else if(strncmp(cmd, "ACCEPT_INVITE:", 14) == 0) {
+                handle_accept_invite(client, cmd);
+            }
+            else if(strncmp(cmd, "DECLINE_INVITE:", 15) == 0) {
+                handle_decline_invite(client, cmd);
+            }
+            else if(strcmp(cmd, "CANCEL_INVITE#") == 0) {
+                handle_cancel_invite(client);
+            }
+            else if(strncmp(cmd, "PLACE:", 6) == 0) {
+                handle_place(client, cmd);
+            }
+            else if(strcmp(cmd, "READY#") == 0) {
+                handle_ready(client);
+            }
+            else if(strncmp(cmd, "FIRE:", 5) == 0) {
+                handle_fire(client, cmd);
+            }
+            else if(strcmp(cmd, "GET_LEADERBOARD#") == 0) {
+                handle_get_leaderboard(client);
+            }
+            else if(strcmp(cmd, "FIND_MATCH#") == 0) {
+                handle_find_match(client);
+            }
+            else if(strcmp(cmd, "CANCEL_MATCH#") == 0) {
+                handle_cancel_match(client);
+            }
+            else if(strcmp(cmd, "LOGOUT#") == 0) {
+                handle_logout(client);
+            }
+            else if(strlen(token) > 0) {  // Only report error if token is not empty
+                send_to_client(client->fd, "ERROR:Unknown command#");
+            }
+            
+            // Get next token
+            token = strtok_r(NULL, "#", &saveptr);
         }
     }
     
     // Cleanup
     if(client->user_id > 0) {
+        mm_remove_player(client->user_id);  // Remove from matchmaking queue if present
         db_logout_user(client->user_id);
     }
     
@@ -853,9 +928,82 @@ void* client_handler(void* arg) {
     client->fd = -1;
     client->is_authenticated = 0;
     client->in_game = 0;
-    client_count--;
     pthread_mutex_unlock(&clients_lock);
     
+    return NULL;
+}
+
+// ==================== MATCHMAKING THREAD ====================
+void* matchmaking_thread(void *arg) {
+    (void)arg;  // Suppress unused warning
+    
+    while(1) {
+        sleep(2);  // Poll every 2 seconds
+        
+        // Cleanup timed-out players
+        mm_cleanup_timeout();
+        
+        // Try to find matches
+        int player1_id, player2_id;
+        while(mm_find_any_match(&player1_id, &player2_id) == 0) {
+            // Found a match! Find both clients
+            Client *client1 = NULL;
+            Client *client2 = NULL;
+            
+            pthread_mutex_lock(&clients_lock);
+            for(int i = 0; i < MAX_CLIENTS; i++) {
+                if(clients[i].fd != -1 && clients[i].user_id == player1_id) {
+                    client1 = &clients[i];
+                }
+                if(clients[i].fd != -1 && clients[i].user_id == player2_id) {
+                    client2 = &clients[i];
+                }
+            }
+            
+            if(client1 && client2) {
+                // Get player info from database
+                UserProfile profile1, profile2;
+                if(db_get_user_profile(player1_id, &profile1) == 0 &&
+                   db_get_user_profile(player2_id, &profile2) == 0) {
+                    
+                    // Send MATCH_FOUND to both clients
+                    char msg1[256], msg2[256];
+                    snprintf(msg1, sizeof(msg1), "MATCH_FOUND:%s:%d#", 
+                             profile2.username, profile2.elo_rating);
+                    snprintf(msg2, sizeof(msg2), "MATCH_FOUND:%s:%d#", 
+                             profile1.username, profile1.elo_rating);
+                    
+                    send(client1->fd, msg1, strlen(msg1), 0);
+                    send(client2->fd, msg2, strlen(msg2), 0);
+                    
+                    // Set up game state and reset maps
+                    client1->opponent_id = player2_id;
+                    client2->opponent_id = player1_id;
+                    client1->in_game = 1;
+                    client2->in_game = 1;
+                    client1->is_ready = 0;
+                    client2->is_ready = 0;
+                    
+                    // Reset game data for new match
+                    init_map(client1->map);
+                    init_map(client1->enemy_map);
+                    init_map(client2->map);
+                    init_map(client2->enemy_map);
+                    client1->ship_count = 0;
+                    client2->ship_count = 0;
+                    client1->total_shots = 0;
+                    client2->total_shots = 0;
+                    client1->total_hits = 0;
+                    client2->total_hits = 0;
+                    
+                    printf("[MATCHMAKING] Match created: %s (ELO %d) vs %s (ELO %d)\n",
+                           profile1.username, profile1.elo_rating,
+                           profile2.username, profile2.elo_rating);
+                }
+            }
+            pthread_mutex_unlock(&clients_lock);
+        }
+    }
     return NULL;
 }
 
@@ -905,6 +1053,12 @@ int main() {
     printf("Server listening on 127.0.0.1:%d\n", PORT);
     printf("=================================\n");
     printf("Waiting for connections...\n\n");
+    
+    // Start matchmaking thread
+    pthread_t mm_thread;
+    pthread_create(&mm_thread, NULL, matchmaking_thread, NULL);
+    pthread_detach(mm_thread);
+    printf("[MATCHMAKING] Background thread started\n\n");
     
     // Accept connections
     while(1) {

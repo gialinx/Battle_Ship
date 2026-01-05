@@ -17,11 +17,8 @@ int assets_init() {
     if(Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
         printf("WARNING: SDL_mixer init failed (audio disabled): %s\n", Mix_GetError());
         // Không return 0 - game vẫn chạy được không có âm thanh
-    } else {
-        printf("Audio system initialized\n");
     }
 
-    printf("Assets system initialized successfully!\n");
     return 1;
 }
 
@@ -77,8 +74,7 @@ int assets_load_image(AssetsManager* assets, SDL_Renderer* renderer, const char*
     // Kiểm tra xem đã load chưa
     for(int i = 0; i < assets->image_count; i++) {
         if(strcmp(assets->images[i].name, filename) == 0) {
-            printf("Image '%s' already loaded!\n", filename);
-            return 1;
+            return 1;  // Already loaded
         }
     }
 
@@ -120,7 +116,7 @@ int assets_load_image(AssetsManager* assets, SDL_Renderer* renderer, const char*
     img->loaded = 1;
 
     assets->image_count++;
-    printf("Image '%s' loaded successfully! (%dx%d)\n", filename, width, height);
+    // printf("Image '%s' loaded (%dx%d)\n", filename, width, height);  // Optional: comment out for faster startup
     return 1;
 }
 

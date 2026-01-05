@@ -14,6 +14,7 @@
 #include "../ui/screens/login_screen.h"
 #include "../ui/screens/lobby_screen.h"
 #include "../ui/screens/profile_screen.h"
+#include "../ui/screens/matchmaking_screen.h"
 #include "../ui/screens/invitation_screen.h"
 #include "../ui/screens/placing_ships_screen.h"
 #include "../ui/screens/playing_screen.h"
@@ -80,16 +81,13 @@ void init_game() {
     fprintf(stderr, "DEBUG: Fonts loaded OK\n");
 
     // Khởi tạo hệ thống assets (ảnh và âm thanh)
-    fprintf(stderr, "DEBUG: Initializing assets system...\n");
     if(!assets_init()) {
         fprintf(stderr, "ERROR: Failed to initialize assets system!\n");
         exit(1);
     }
     assets_manager_init(&game.assets);
-    fprintf(stderr, "DEBUG: Assets system initialized OK\n");
-
+    
     // Load ảnh nền cho màn hình login
-    fprintf(stderr, "DEBUG: Loading background image...\n");
     assets_load_image(&game.assets, game.renderer, "battle_ship_1.png");
 
     // TODO: Load thêm ảnh và âm thanh khác ở đây
@@ -100,12 +98,17 @@ void init_game() {
     game.running = 1;
     game.is_register_mode = 0;
     
-    // Setup input fields
+    // Setup input fields - IMPORTANT: Initialize text to empty
+    game.username_field.text[0] = '\0';
+    game.username_field.cursor_pos = 0;
     game.username_field.rect = (SDL_Rect){300, 250, 400, 40};
-    game.password_field.rect = (SDL_Rect){300, 320, 400, 40};
     game.username_field.is_password = 0;
-    game.password_field.is_password = 1;
     game.username_field.is_active = 1;
+    
+    game.password_field.text[0] = '\0';
+    game.password_field.cursor_pos = 0;
+    game.password_field.rect = (SDL_Rect){300, 320, 400, 40};
+    game.password_field.is_password = 1;
     game.password_field.is_active = 0;
 
     // Setup player search field (in lobby)
@@ -221,6 +224,9 @@ void handle_events() {
             }
             else if(game.state == STATE_PROFILE) {
                 profile_screen_handle_click(&game, x, y);
+            }
+            else if(game.state == STATE_MATCHMAKING) {
+                matchmaking_screen_handle_click(&game, x, y);
             }
             else if(game.state == STATE_LOBBY) {
                 lobby_screen_handle_click(&game, x, y);
@@ -339,6 +345,9 @@ void render() {
     }
     else if(game.state == STATE_PROFILE) {
         profile_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_MATCHMAKING) {
+        matchmaking_screen_render(game.renderer, &game);
     }
     else if(game.state == STATE_SENDING_INVITE || game.state == STATE_WAITING_INVITE || game.state == STATE_RECEIVED_INVITE) {
         lobby_screen_render(game.renderer, &game);

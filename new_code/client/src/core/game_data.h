@@ -115,6 +115,7 @@ typedef struct {
 
     // Matchmaking
     int matchmaking_active;           // 1 nếu đang trong hàng chờ
+    unsigned int matchmaking_start_time;  // SDL_GetTicks() khi bắt đầu matchmaking
     char matched_opponent_name[50];   // Tên đối thủ khi tìm được match
     int matched_opponent_id;          // ID đối thủ
     int matched_opponent_elo;         // ELO đối thủ
