@@ -4,6 +4,8 @@
 #include "../../ui/colors.h"
 #include <string.h>
 #include <stdio.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #define SCREEN_WIDTH 1000
 #define SCREEN_HEIGHT 700
@@ -380,7 +382,13 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
             if(strcmp(u->status, "online") == 0) {
                 game->invited_user_id = u->user_id;
                 strcpy(game->invited_username, u->username);
-                game->state = STATE_SENDING_INVITE;  // Changed: Show "Sending..." first
+                game->state = STATE_SENDING_INVITE;
+                
+                // Send INVITE command to server
+                char buffer[256];
+                snprintf(buffer, sizeof(buffer), "INVITE:%d#", u->user_id);
+                send(game->sockfd, buffer, strlen(buffer), 0);
+                printf("CLIENT: Sent INVITE to user_id=%d (%s)\n", u->user_id, u->username);
             }
             return;
         }

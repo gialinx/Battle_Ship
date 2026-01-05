@@ -44,6 +44,9 @@ int db_init() {
         "player2_hit_diff INTEGER DEFAULT 0,"
         "player1_accuracy REAL DEFAULT 0.0,"
         "player2_accuracy REAL DEFAULT 0.0,"
+        "player1_total_shots INTEGER DEFAULT 0,"
+        "player2_total_shots INTEGER DEFAULT 0,"
+        "game_duration_seconds INTEGER DEFAULT 0,"
         "match_data TEXT,"
         "played_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
         "FOREIGN KEY(player1_id) REFERENCES users(user_id),"
@@ -91,30 +94,50 @@ double calculate_expected_score(int ra, int rb) {
     return 1.0 / (1.0 + pow(10.0, (double)(rb - ra) / 400.0));
 }
 
-double calculate_performance_score(int hit_diff, float accuracy) {
-    double p = 0.4 * hit_diff + 0.2 * accuracy;
-    return fmax(0.0, fmin(1.0, p));
+// Calculate performance bonus based on time and efficiency
+// Only for winners, max +10 ELO (20% of typical K=50)
+double calculate_performance_bonus(int total_shots, int game_duration_seconds, int is_winner) {
+    if (!is_winner) return 0.0;
+    
+    // Time bonus: < 5 min = +5 ELO, > 15 min = 0 ELO
+    double time_minutes = game_duration_seconds / 60.0;
+    double time_bonus = 5.0 * fmax(0.0, 1.0 - time_minutes / 15.0);
+    time_bonus = fmin(time_bonus, 5.0);
+    
+    // Efficiency bonus: < 30 shots = +5 ELO, > 60 shots = 0 ELO
+    double efficiency_bonus = 5.0 * fmax(0.0, 1.0 - (double)total_shots / 60.0);
+    efficiency_bonus = fmin(efficiency_bonus, 5.0);
+    
+    double total_bonus = time_bonus + efficiency_bonus;
+    
+    printf("  Performance Bonus: Time=%.1f min (bonus=+%.1f), Shots=%d (bonus=+%.1f), Total=+%.1f\n",
+           time_minutes, time_bonus, total_shots, efficiency_bonus, total_bonus);
+    
+    return total_bonus;
 }
 
-double calculate_actual_score(int is_winner, double performance) {
-    if (is_winner) {
-        return fmax(0.5, fmin(1.0, 0.5 + performance));
-    } else {
-        return fmax(0.0, fmin(0.5, performance));
-    }
-}
-
-int calculate_elo_change(int player_elo, int opponent_elo, int total_games, 
-                         float hit_diff, float accuracy, int is_winner) {
+int calculate_elo_change(int player_elo, int opponent_elo, int total_games,
+                         float hit_diff, float accuracy, int total_shots,
+                         int game_duration_seconds, int is_winner) {
+    // Standard ELO calculation
     double k = calculate_k_factor(total_games, player_elo, opponent_elo);
     double ea = calculate_expected_score(player_elo, opponent_elo);
-    double p = calculate_performance_score(hit_diff, accuracy);
-    double sa = calculate_actual_score(is_winner, p);
-    double delta_ra = k * (sa - ea);
-    int elo_change = (int)round(delta_ra);
     
-    printf("ELO Calculation: K=%.2f, EA=%.4f, P=%.4f, SA=%.4f, ΔRA=%d\n", 
-           k, ea, p, sa, elo_change);
+    // Result: 1 for win, 0 for loss
+    double actual_result = is_winner ? 1.0 : 0.0;
+    
+    // Base ELO change
+    double base_change = k * (actual_result - ea);
+    
+    // Performance bonus (only for winner)
+    double performance_bonus = calculate_performance_bonus(total_shots, game_duration_seconds, is_winner);
+    
+    // Final ELO change
+    double total_change = base_change + performance_bonus;
+    int elo_change = (int)round(total_change);
+    
+    printf("ELO Calculation: K=%.2f, EA=%.4f, Result=%.0f, Base=%.1f, Bonus=+%.1f, Final=%+d\n", 
+           k, ea, actual_result, base_change, performance_bonus, elo_change);
     
     return elo_change;
 }
@@ -130,13 +153,15 @@ void db_update_elo_after_match(MatchHistory* match) {
     int p1_is_winner = (match->winner_id == match->player1_id) ? 1 : 0;
     match->player1_elo_gain = calculate_elo_change(
         p1.elo_rating, p2.elo_rating, p1.total_games,
-        match->player1_hit_diff, match->player1_accuracy, p1_is_winner
+        match->player1_hit_diff, match->player1_accuracy,
+        match->player1_total_shots, match->game_duration_seconds, p1_is_winner
     );
     
     int p2_is_winner = (match->winner_id == match->player2_id) ? 1 : 0;
     match->player2_elo_gain = calculate_elo_change(
         p2.elo_rating, p1.elo_rating, p2.total_games,
-        match->player2_hit_diff, match->player2_accuracy, p2_is_winner
+        match->player2_hit_diff, match->player2_accuracy,
+        match->player2_total_shots, match->game_duration_seconds, p2_is_winner
     );
     
     match->player1_elo_after = p1.elo_rating + match->player1_elo_gain;
@@ -273,7 +298,8 @@ int db_save_match(MatchHistory* match) {
                       "player1_score, player2_score, player1_elo_before, player2_elo_before, "
                       "player1_elo_gain, player2_elo_gain, player1_elo_after, player2_elo_after, "
                       "player1_hit_diff, player2_hit_diff, player1_accuracy, player2_accuracy, "
-                      "match_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+                      "player1_total_shots, player2_total_shots, game_duration_seconds, "
+                      "match_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt;
 
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
@@ -294,7 +320,10 @@ int db_save_match(MatchHistory* match) {
     sqlite3_bind_int(stmt, 13, match->player2_hit_diff);
     sqlite3_bind_double(stmt, 14, match->player1_accuracy);
     sqlite3_bind_double(stmt, 15, match->player2_accuracy);
-    sqlite3_bind_text(stmt, 16, match->match_data, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 16, match->player1_total_shots);
+    sqlite3_bind_int(stmt, 17, match->player2_total_shots);
+    sqlite3_bind_int(stmt, 18, match->game_duration_seconds);
+    sqlite3_bind_text(stmt, 19, match->match_data, -1, SQLITE_STATIC);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);

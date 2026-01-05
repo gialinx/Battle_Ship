@@ -35,6 +35,9 @@ typedef struct {
     int player2_hit_diff;
     float player1_accuracy;
     float player2_accuracy;
+    int player1_total_shots;
+    int player2_total_shots;
+    int game_duration_seconds;
     char match_data[4096];
     time_t played_at;
 } MatchHistory;
@@ -50,7 +53,8 @@ int db_get_match_history(int user_id, MatchHistory** matches, int* count);
 int db_get_match_for_rewatch(int match_id, MatchHistory* match);
 int db_update_score(int user_id, int score_change, int is_win);
 int calculate_elo_change(int player_elo, int opponent_elo, int total_games,
-                         float hit_diff, float accuracy, int is_winner);
+                         float hit_diff, float accuracy, int total_shots, 
+                         int game_duration_seconds, int is_winner);
 void db_update_elo_after_match(MatchHistory* match);
 
 // New functions for lobby redesign

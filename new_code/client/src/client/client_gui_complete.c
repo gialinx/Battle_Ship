@@ -14,8 +14,10 @@
 #include "../ui/screens/login_screen.h"
 #include "../ui/screens/lobby_screen.h"
 #include "../ui/screens/profile_screen.h"
+#include "../ui/screens/invitation_screen.h"
 #include "../ui/screens/placing_ships_screen.h"
 #include "../ui/screens/playing_screen.h"
+#include "../ui/screens/game_over_screen.h"
 #include "../network/network.h"
 #include "../network/protocol.h"
 
@@ -223,58 +225,20 @@ void handle_events() {
             else if(game.state == STATE_LOBBY) {
                 lobby_screen_handle_click(&game, x, y);
                 
-                // Send commands
+                // Send commands for buttons only (INVITE is sent in lobby_screen_handle_click)
                 if(x >= 50 && x <= 200 && y >= 620 && y <= 670) {
                     send_msg("GET_USERS");
                 }
                 if(x >= 220 && x <= 370 && y >= 620 && y <= 670) {
                     send_msg("LOGOUT");
                 }
-                if(x >= 800 && x <= 920) {
-                    int list_y = 120;
-                    for(int i = game.scroll_offset; i < game.user_count && i < game.scroll_offset + 10; i++) {
-                        if(y >= list_y + 5 && y <= list_y + 40) {
-                            char msg[256];
-                            snprintf(msg, sizeof(msg), "INVITE:%d", game.users[i].user_id);
-                            send_msg(msg);
-                            break;
-                        }
-                        list_y += 50;
-                    }
-                }
             }
-            else if(game.state == STATE_WAITING_INVITE || game.state == STATE_RECEIVED_INVITE) {
-                GameState prev_state = game.state;
-                lobby_screen_handle_invite_click(&game, x, y);
-
-                // X button (close) - detect state change
-                int close_x = 720, close_y = 205, close_size = 25;
-                if(x >= close_x && x <= close_x + close_size && y >= close_y && y <= close_y + close_size) {
-                    if(prev_state == STATE_WAITING_INVITE) {
-                        send_msg("CANCEL_INVITE");
-                    } else if(prev_state == STATE_RECEIVED_INVITE) {
-                        char msg[256];
-                        snprintf(msg, sizeof(msg), "DECLINE_INVITE:%d", game.inviter_user_id);
-                        send_msg(msg);
-                    }
-                }
-                // Cancel button
-                else if(prev_state == STATE_WAITING_INVITE && x >= 400 && x <= 600 && y >= 400 && y <= 450) {
-                    send_msg("CANCEL_INVITE");
-                }
-                // Accept/Decline buttons
-                else if(prev_state == STATE_RECEIVED_INVITE) {
-                    if(x >= 280 && x <= 460 && y >= 400 && y <= 450) {
-                        char msg[256];
-                        snprintf(msg, sizeof(msg), "ACCEPT_INVITE:%d", game.inviter_user_id);
-                        send_msg(msg);
-                    }
-                    else if(x >= 480 && x <= 660 && y >= 400 && y <= 450) {
-                        char msg[256];
-                        snprintf(msg, sizeof(msg), "DECLINE_INVITE:%d", game.inviter_user_id);
-                        send_msg(msg);
-                    }
-                }
+            else if(game.state == STATE_SENDING_INVITE || game.state == STATE_WAITING_INVITE || game.state == STATE_RECEIVED_INVITE) {
+                invitation_screen_handle_click(&game, x, y);
+            }
+            else if(game.state == STATE_LOBBY && strlen(game.message) > 0 && strstr(game.message, "declined") != NULL) {
+                // Handle decline notification dialog
+                invitation_screen_handle_click(&game, x, y);
             }
             else if(game.state == STATE_PLACING_SHIPS) {
                 placing_ships_handle_click(&game, x, y);
@@ -307,6 +271,9 @@ void handle_events() {
                         }
                     }
                 }
+            }
+            else if(game.state == STATE_GAME_OVER) {
+                game_over_screen_handle_click(&game, x, y);
             }
         }
         
@@ -373,15 +340,22 @@ void render() {
     else if(game.state == STATE_PROFILE) {
         profile_screen_render(game.renderer, &game);
     }
-    else if(game.state == STATE_WAITING_INVITE || game.state == STATE_RECEIVED_INVITE) {
+    else if(game.state == STATE_SENDING_INVITE || game.state == STATE_WAITING_INVITE || game.state == STATE_RECEIVED_INVITE) {
         lobby_screen_render(game.renderer, &game);
-        lobby_screen_render_invite_dialog(game.renderer, &game);
+        invitation_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_LOBBY && strlen(game.message) > 0 && strstr(game.message, "declined") != NULL) {
+        lobby_screen_render(game.renderer, &game);
+        invitation_screen_render(game.renderer, &game);
     }
     else if(game.state == STATE_PLACING_SHIPS) {
         placing_ships_render(game.renderer, &game);
     }
-    else if(game.state == STATE_PLAYING || game.state == STATE_GAME_OVER) {
+    else if(game.state == STATE_PLAYING) {
         playing_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_GAME_OVER) {
+        game_over_screen_render(game.renderer, &game);
     }
     
     pthread_mutex_unlock(&game_lock);
@@ -417,7 +391,8 @@ int main(int argc, char* argv[]) {
         // Check for state changes
         pthread_mutex_lock(&game_lock);
         if(game.state == STATE_LOBBY && prev_state != STATE_LOBBY) {
-            // Just entered lobby - request users and leaderboard
+            // Just entered lobby - request updated stats, users and leaderboard
+            send_msg("GET_MY_STATS");
             send_msg("GET_USERS");
             send_msg("GET_LEADERBOARD");
             game.last_leaderboard_update = current_time;

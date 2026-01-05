@@ -162,6 +162,18 @@ typedef struct {
     int game_active;
     char message[256];
     char game_message[256];
+    
+    // Game result (for game over screen)
+    int game_result_won;       // 1 = win, 0 = lose
+    int elo_before;            // ELO trước trận
+    int elo_change;            // ELO change (base, không bao gồm bonus)
+    int elo_bonus;             // Performance bonus
+    int elo_predicted;         // ELO dự đoán real-time (tăng khi bắn trúng)
+    
+    // Game statistics
+    int total_shots;           // Tổng số shots đã bắn
+    int hits_count;            // Số lần bắn trúng
+    int misses_count;          // Số lần bắn trượt
 } GameData;
 
 #endif

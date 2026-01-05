@@ -13,6 +13,9 @@
 void render_text(SDL_Renderer* renderer, TTF_Font* font, const char* text, 
                  int x, int y, SDL_Color color);
 
+void render_text_centered(SDL_Renderer* renderer, TTF_Font* font, const char* text, 
+                         int x, int y, SDL_Color color);
+
 int render_button(SDL_Renderer* renderer, TTF_Font* font, const char* text,
                   int x, int y, int w, int h, SDL_Color bg, int hover, int enabled);
 

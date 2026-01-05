@@ -53,52 +53,44 @@ echo ""
 echo "🔍 Kiểm tra server..."
 if pgrep -f "server_lobby" > /dev/null; then
     echo "⚠️  Server đang chạy. Dừng server cũ..."
-    pkill -f "server_lobby"
-    sleep 1
-fi
-
-# Khởi động server
-echo "🚀 Khởi động server_lobby trên port 8888..."
-./server_lobby &
-SERVER_PID=$!
-sleep 2
-
-# Kiểm tra server đã khởi động thành công
-if ps -p $SERVER_PID > /dev/null; then
-    echo "✅ Server đã khởi động (PID: $SERVER_PID)"
-    echo ""
-    echo "========================================="
-    echo "  SERVER ĐANG CHẠY"
-    echo "========================================="
-    echo ""
-    echo "📋 Thông tin:"
-    echo "   - Port: 8888"
-    echo "   - Database: battleship.db"
-    echo ""
-
-    # Hiển thị database info
-    if [ -f "battleship.db" ]; then
-        echo "📊 Database users:"
-        sqlite3 battleship.db "SELECT username, elo_rating, total_games, wins FROM users;" 2>/dev/null || echo "   (Chưa có users)"
+    pkill -9 -f "server_lobby"
+    sleep 2
+    if pgrep -f "server_lobby" > /dev/null; then
+        echo "❌ Không thể dừng server cũ. Vui lòng chạy: pkill -9 server_lobby"
+        exit 1
     fi
-
-    echo ""
-    echo "🛑 Để dừng server: pkill server_lobby hoặc Ctrl+C"
-    echo ""
-
-    # Cleanup function
-    cleanup() {
-        echo ""
-        echo "🛑 Đang dừng server..."
-        kill $SERVER_PID 2>/dev/null
-        exit 0
-    }
-
-    trap cleanup INT TERM
-
-    # Giữ script chạy
-    wait $SERVER_PID
-else
-    echo "❌ Lỗi: Không thể khởi động server!"
-    exit 1
+    echo "✅ Server cũ đã dừng"
 fi
+
+# Hiển thị database info trước khi chạy
+if [ -f "battleship.db" ]; then
+    echo ""
+    echo "📊 Database users:"
+    sqlite3 battleship.db "SELECT username, elo_rating, total_games, wins FROM users;" 2>/dev/null || echo "   (Chưa có users)"
+    echo ""
+fi
+
+echo "========================================="
+echo "  SERVER STARTING"
+echo "========================================="
+echo ""
+echo "🚀 Khởi động server_lobby..."
+echo "📋 Cấu hình:"
+echo "   - IP: 127.0.0.1 (localhost)"
+echo "   - Port: 5501"
+echo "   - Database: battleship.db"
+echo ""
+echo "🛑 Để dừng server: Ctrl+C"
+echo ""
+
+# Cleanup function
+cleanup() {
+    echo ""
+    echo "🛑 Đang dừng server..."
+    exit 0
+}
+
+trap cleanup INT TERM
+
+# Chạy ở FOREGROUND (không có dấu &)
+./server_lobby

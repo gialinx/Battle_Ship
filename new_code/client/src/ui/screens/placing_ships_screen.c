@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <SDL2/SDL.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #define MAP_X 200
 #define MAP_Y 100
@@ -220,7 +222,14 @@ void placing_ships_handle_click(GameData* game, int x, int y) {
             int length = game->selected_ship_length;
             int horizontal = game->ship_horizontal;
             
-            // Mark on map
+            // Send PLACE command to server
+            char buffer[256];
+            snprintf(buffer, sizeof(buffer), "PLACE:%d,%d,%d,%c#", 
+                     length, grid_x + 1, grid_y + 1, horizontal ? 'H' : 'V');
+            send(game->sockfd, buffer, strlen(buffer), 0);
+            printf("CLIENT: Sent PLACE command: %s\n", buffer);
+            
+            // Mark on map (will be confirmed by server STATE update)
             for(int i = 0; i < length; i++) {
                 int tx = grid_x + (horizontal ? i : 0);
                 int ty = grid_y + (horizontal ? 0 : i);

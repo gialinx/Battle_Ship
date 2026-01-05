@@ -2,7 +2,7 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
-#define PORT 5500
+#define PORT 5501
 
 // Connect to server
 int connect_to_server(const char* ip, int port);

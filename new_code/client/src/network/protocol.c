@@ -123,7 +123,19 @@ int parse_login_response(GameData* game, const char* msg) {
                game->my_username, &game->total_games, &game->wins,
                &game->my_elo, &game->my_user_id);
         return 1;
-    } else if(strncmp(msg, "LOGIN_FAIL", 10) == 0) {
+    }
+    
+    // Handle MY_STATS response (same format as LOGIN_OK)
+    if(strncmp(msg, "MY_STATS:", 9) == 0) {
+        sscanf(msg, "MY_STATS:%[^:]:%d:%d:%d:%d",
+               game->my_username, &game->total_games, &game->wins,
+               &game->my_elo, &game->my_user_id);
+        printf("CLIENT: Updated my stats - ELO: %d, Games: %d, Wins: %d\n",
+               game->my_elo, game->total_games, game->wins);
+        return 1;
+    }
+    
+    else if(strncmp(msg, "LOGIN_FAIL", 10) == 0) {
         // Parse chi tiết message từ server: LOGIN_FAIL:reason
         const char* colon = strchr(msg, ':');
         if(colon && strlen(colon + 1) > 0) {
@@ -329,6 +341,7 @@ int parse_server_message(GameData* game, const char* msg) {
     if(strncmp(msg, "START_PLAYING", 13) == 0) {
         game->state = STATE_PLAYING;
         game->is_my_turn = 0;
+        game->elo_predicted = game->my_elo;  // Initialize prediction
         snprintf(game->message, sizeof(game->message), "Game started! Good luck!");
         return 1;
     }
@@ -357,17 +370,50 @@ int parse_server_message(GameData* game, const char* msg) {
         return 1;
     }
     if(strncmp(msg, "YOU WIN:", 8) == 0) {
+        // Parse: YOU WIN:ELO +25#
+        int elo_change = 0;
+        sscanf(msg, "YOU WIN:ELO %d", &elo_change);
+        
         game->state = STATE_GAME_OVER;
-        snprintf(game->message, sizeof(game->message), "YOU WIN!");
+        game->game_result_won = 1;
+        game->elo_before = game->my_elo;
+        game->elo_change = elo_change;
+        game->elo_bonus = 0;  // Server will send total, we'll parse bonus later
+        
+        // Update my_elo
+        game->my_elo += elo_change;
+        
+        snprintf(game->message, sizeof(game->message), "YOU WIN! ELO: %+d", elo_change);
+        printf("CLIENT: Won game, ELO change: %+d, new ELO: %d\n", elo_change, game->my_elo);
         return 1;
     }
     if(strncmp(msg, "YOU LOSE:", 9) == 0) {
+        // Parse: YOU LOSE:ELO -25#
+        int elo_change = 0;
+        sscanf(msg, "YOU LOSE:ELO %d", &elo_change);
+        
         game->state = STATE_GAME_OVER;
-        snprintf(game->message, sizeof(game->message), "YOU LOSE!");
+        game->game_result_won = 0;
+        game->elo_before = game->my_elo;
+        game->elo_change = elo_change;
+        game->elo_bonus = 0;
+        
+        // Update my_elo
+        game->my_elo += elo_change;
+        
+        snprintf(game->message, sizeof(game->message), "YOU LOSE! ELO: %+d", elo_change);
+        printf("CLIENT: Lost game, ELO change: %+d, new ELO: %d\n", elo_change, game->my_elo);
         return 1;
     }
     if(strncmp(msg, "MATCH_START:", 12) == 0) {
         game->state = STATE_PLAYING;
+        game->elo_predicted = game->my_elo;  // Reset prediction
+        
+        // Reset game statistics
+        game->total_shots = 0;
+        game->hits_count = 0;
+        game->misses_count = 0;
+        
         snprintf(game->message, sizeof(game->message), "Match started!");
         return 1;
     }

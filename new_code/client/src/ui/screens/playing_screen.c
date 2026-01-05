@@ -19,6 +19,22 @@ void playing_screen_render(SDL_Renderer* renderer, GameData* game) {
     // Title
     render_text(renderer, game->font, "BATTLESHIP - IN BATTLE", 320, 10, COLOR_TEXT);
 
+    // ==================== ELO BAR ====================
+    // Display current ELO with prediction
+    char elo_text[128];
+    int display_elo = game->elo_predicted > 0 ? game->elo_predicted : game->my_elo;
+    snprintf(elo_text, sizeof(elo_text), "ELO: %d", display_elo);
+    render_text(renderer, game->font_small, elo_text, 850, 15, 
+                (SDL_Color){255, 215, 0, 255});  // Gold color
+    
+    // Show predicted change if different from base
+    if(game->elo_predicted > game->my_elo) {
+        char pred_text[64];
+        snprintf(pred_text, sizeof(pred_text), "(+%d)", game->elo_predicted - game->my_elo);
+        render_text(renderer, game->font_small, pred_text, 920, 15,
+                   (SDL_Color){0, 255, 100, 255});  // Green
+    }
+
     // Turn indicator
     if(game->is_my_turn) {
         render_text(renderer, game->font, "YOUR TURN!", 410, 40,
@@ -44,37 +60,12 @@ void playing_screen_render(SDL_Renderer* renderer, GameData* game) {
                    (SDL_Color){255, 255, 0, 255});
     }
 
-    // Back button (only show in GAME_OVER state)
-    if(game->state == STATE_GAME_OVER) {
-        int mx, my;
-        SDL_GetMouseState(&mx, &my);
-        int back_x = 400, back_y = 600;
-        int back_hover = (mx >= back_x && mx <= back_x + 200 && my >= back_y && my <= back_y + 50);
-        render_button(renderer, game->font, "< Back to Lobby", back_x, back_y, 200, 50,
-                     (SDL_Color){200, 100, 0, 255}, back_hover, 1);
-    }
+    // NO BACK BUTTON during gameplay - removed
 }
 
 // ==================== HANDLE CLICK ====================
 void playing_screen_handle_click(GameData* game, int x, int y) {
-    // Check for Back button click (GAME_OVER state)
-    if(game->state == STATE_GAME_OVER) {
-        int back_x = 400, back_y = 600;
-        if(x >= back_x && x <= back_x + 200 && y >= back_y && y <= back_y + 50) {
-            // Reset game and return to lobby
-            game->state = STATE_LOBBY;
-            for(int i=0; i<MAP_SIZE; i++)
-                for(int j=0; j<MAP_SIZE; j++) {
-                    game->own_map[i][j] = '-';
-                    game->enemy_map[i][j] = '-';
-                }
-            game->is_my_turn = 0;
-            game->game_active = 0;
-            strcpy(game->message, "");
-            return;
-        }
-    }
-
+    // Only handle firing during active gameplay
     if(!game->is_my_turn) return;
 
     // Check if click is on enemy map

@@ -7,7 +7,7 @@
 #include <pthread.h>
 #include "database.h"
 
-#define PORT 5500
+#define PORT 5501
 #define MAX_CLIENTS 50
 #define BUFF_SIZE 8192
 #define MAP_SIZE 13
@@ -40,6 +40,11 @@ typedef struct {
     Ship ships[MAX_SHIP];                // Danh sách tàu
     int ship_count;                      // Số tàu đã đặt
     int is_my_turn;                      // Lượt của mình không
+    
+    // Game statistics (for ELO calculation)
+    int total_shots;                     // Tổng số lần bắn
+    int total_hits;                      // Số lần bắn trúng
+    time_t game_start_time;              // Thời điểm bắt đầu game
 } Client;
 
 Client clients[MAX_CLIENTS];
@@ -202,6 +207,28 @@ void handle_login(Client* client, char* buffer) {
     }
 }
 
+// ==================== HANDLE GET_MY_STATS ====================
+void handle_get_my_stats(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    UserProfile profile;
+    if(db_get_user_profile(client->user_id, &profile) == 0) {
+        char response[BUFF_SIZE];
+        snprintf(response, sizeof(response),
+                "MY_STATS:%s:%d:%d:%d:%d#",
+                profile.username, profile.total_games,
+                profile.wins, profile.elo_rating, client->user_id);
+        send_to_client(client->fd, response);
+        printf("Sent stats to %s: ELO=%d, Games=%d, Wins=%d\n",
+               profile.username, profile.elo_rating, profile.total_games, profile.wins);
+    } else {
+        send_to_client(client->fd, "ERROR:Failed to get stats#");
+    }
+}
+
 // ==================== HANDLE GET_USERS ====================
 void handle_get_users(Client* client) {
     if(!client->is_authenticated) {
@@ -328,6 +355,14 @@ void handle_accept_invite(Client* client, char* buffer) {
         inviter->ship_count = 0;
         client->is_my_turn = 0;
         inviter->is_my_turn = 0;
+        
+        // Initialize game statistics
+        client->total_shots = 0;
+        client->total_hits = 0;
+        inviter->total_shots = 0;
+        inviter->total_hits = 0;
+        client->game_start_time = 0;  // Will be set when game actually starts
+        inviter->game_start_time = 0;
 
         // Send GAME_START to both
         send_to_client(inviter->fd, "GAME_START#");
@@ -506,6 +541,11 @@ void handle_ready(Client* client) {
         usleep(100000); // Small delay
         send_to_client(client->fd, "START_PLAYING#");
         send_to_client(opponent->fd, "START_PLAYING#");
+        
+        // Set game start time
+        time_t now = time(NULL);
+        client->game_start_time = now;
+        opponent->game_start_time = now;
 
         // Send initial state to both
         send_state(client);
@@ -577,6 +617,9 @@ void handle_fire(Client* client, char* buffer) {
 
     // Process the fire
     char cell = opponent->map[y][x];
+    
+    // Track shot
+    client->total_shots++;
 
     if(cell == '-') {
         // MISS
@@ -601,6 +644,9 @@ void handle_fire(Client* client, char* buffer) {
         // HIT
         client->enemy_map[y][x] = 'o';
         opponent->map[y][x] = 'o';
+        
+        // Track hit
+        client->total_hits++;
 
         // Find and update ship
         for(int s=0; s<opponent->ship_count; s++) {
@@ -635,9 +681,51 @@ void handle_fire(Client* client, char* buffer) {
 
         if(!opponent_alive) {
             // Game over - client wins
-            send_to_client(client->fd, "YOU WIN:#");
-            send_to_client(opponent->fd, "YOU LOSE:#");
             printf("✓ Game over: %s wins!\n", client->username);
+            
+            // Calculate game duration
+            time_t now = time(NULL);
+            int game_duration = (int)difftime(now, client->game_start_time);
+            
+            // Calculate accuracy
+            float client_accuracy = client->total_shots > 0 ? 
+                (float)client->total_hits / client->total_shots * 100.0f : 0.0f;
+            float opponent_accuracy = opponent->total_shots > 0 ? 
+                (float)opponent->total_hits / opponent->total_shots * 100.0f : 0.0f;
+            
+            // Save match to database
+            MatchHistory match = {0};
+            match.player1_id = client->user_id;
+            match.player2_id = opponent->user_id;
+            match.winner_id = client->user_id;
+            match.player1_total_shots = client->total_shots;
+            match.player2_total_shots = opponent->total_shots;
+            match.player1_hit_diff = client->total_hits - opponent->total_hits;
+            match.player2_hit_diff = opponent->total_hits - client->total_hits;
+            match.player1_accuracy = client_accuracy;
+            match.player2_accuracy = opponent_accuracy;
+            match.game_duration_seconds = game_duration;
+            
+            // Calculate and update ELO
+            db_update_elo_after_match(&match);
+            db_save_match(&match);
+            
+            // Update user stats
+            db_update_score(client->user_id, 1, 1);  // Win
+            db_update_score(opponent->user_id, 0, 0);  // Loss
+            
+            printf("  Game Stats: Duration=%ds, %s: %d shots %.1f%% acc, %s: %d shots %.1f%% acc\n",
+                   game_duration, client->username, client->total_shots, client_accuracy,
+                   opponent->username, opponent->total_shots, opponent_accuracy);
+            
+            // Send results with ELO change
+            char win_msg[256];
+            snprintf(win_msg, sizeof(win_msg), "YOU WIN:ELO %+d#", match.player1_elo_gain);
+            send_to_client(client->fd, win_msg);
+            
+            char lose_msg[256];
+            snprintf(lose_msg, sizeof(lose_msg), "YOU LOSE:ELO %+d#", match.player2_elo_gain);
+            send_to_client(opponent->fd, lose_msg);
 
             // Reset game state
             client->in_game = 0;
@@ -720,6 +808,9 @@ void* client_handler(void* arg) {
         else if(strcmp(buffer, "GET_USERS#") == 0) {
             handle_get_users(client);
         }
+        else if(strcmp(buffer, "GET_MY_STATS#") == 0) {
+            handle_get_my_stats(client);
+        }
         else if(strncmp(buffer, "INVITE:", 7) == 0) {
             handle_invite(client, buffer);
         }
@@ -775,7 +866,7 @@ int main() {
         fprintf(stderr, "Failed to initialize database\n");
         return 1;
     }
-    printf("Database initialized successfully\n");
+    // Message already printed by db_init()
     
     // Initialize clients
     for(int i=0; i<MAX_CLIENTS; i++) {
@@ -798,17 +889,22 @@ int main() {
     
     struct sockaddr_in servaddr;
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = INADDR_ANY;  // Listen on all network interfaces
+
+    // Use 127.0.0.1 (localhost) by default
+    inet_pton(AF_INET, "127.0.0.1", &servaddr.sin_addr);
     servaddr.sin_port = htons(PORT);
 
     if(bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
         perror("bind");
+        fprintf(stderr, "Failed to bind to 127.0.0.1:%d\n", PORT);
         return 1;
     }
 
     listen(listenfd, 10);
-    printf("Server listening on 0.0.0.0:%d (all interfaces)\n", PORT);
-    printf("Waiting for connections...\n");
+    printf("\n=================================\n");
+    printf("Server listening on 127.0.0.1:%d\n", PORT);
+    printf("=================================\n");
+    printf("Waiting for connections...\n\n");
     
     // Accept connections
     while(1) {

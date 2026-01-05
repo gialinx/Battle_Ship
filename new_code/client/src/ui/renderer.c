@@ -26,6 +26,31 @@ void render_text(SDL_Renderer* renderer, TTF_Font* font, const char* text,
     SDL_FreeSurface(surface);
 }
 
+// ==================== RENDER CENTERED TEXT ====================
+void render_text_centered(SDL_Renderer* renderer, TTF_Font* font, const char* text, 
+                         int x, int y, SDL_Color color) {
+    if(!font || !text) return;
+    
+    SDL_Surface* surface = TTF_RenderUTF8_Solid(font, text, color);
+    if(!surface) return;
+    
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    if(!texture) {
+        SDL_FreeSurface(surface);
+        return;
+    }
+    
+    SDL_Rect rect;
+    rect.w = surface->w;
+    rect.h = surface->h;
+    rect.x = x - rect.w / 2;  // Center horizontally
+    rect.y = y;
+    
+    SDL_RenderCopy(renderer, texture, NULL, &rect);
+    SDL_DestroyTexture(texture);
+    SDL_FreeSurface(surface);
+}
+
 // ==================== RENDER BUTTON ====================
 int render_button(SDL_Renderer* renderer, TTF_Font* font, const char* text,
                   int x, int y, int w, int h, SDL_Color bg, int hover, int enabled) {
