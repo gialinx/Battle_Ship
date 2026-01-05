@@ -1,0 +1,11 @@
+# Ignore compiled binaries
+server
+server_lobby
+
+# Ignore database file (will be created on first run)
+battleship.db
+battleship.db-journal
+
+# Ignore build artifacts
+*.o
+*.out

@@ -1,0 +1,10 @@
+# Cho phép commit ảnh và âm thanh
+# (Đã bỏ ignore để push assets lên GitHub)
+
+# Chỉ ignore các file tạm thời nếu có
+*.tmp
+*.bak
+
+# Giữ lại các file README
+!README.md
+!EXAMPLE_USAGE.md
