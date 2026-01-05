@@ -15,6 +15,7 @@
 #include "../ui/screens/lobby_screen.h"
 #include "../ui/screens/profile_screen.h"
 #include "../ui/screens/matchmaking_screen.h"
+#include "../ui/screens/match_found_screen.h"
 #include "../ui/screens/invitation_screen.h"
 #include "../ui/screens/placing_ships_screen.h"
 #include "../ui/screens/playing_screen.h"
@@ -228,6 +229,9 @@ void handle_events() {
             else if(game.state == STATE_MATCHMAKING) {
                 matchmaking_screen_handle_click(&game, x, y);
             }
+            else if(game.state == STATE_MATCH_FOUND) {
+                match_found_screen_handle_click(x, y, &game);
+            }
             else if(game.state == STATE_LOBBY) {
                 lobby_screen_handle_click(&game, x, y);
                 
@@ -348,6 +352,9 @@ void render() {
     }
     else if(game.state == STATE_MATCHMAKING) {
         matchmaking_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_MATCH_FOUND) {
+        match_found_screen_render(game.renderer, game.font, &game);
     }
     else if(game.state == STATE_SENDING_INVITE || game.state == STATE_WAITING_INVITE || game.state == STATE_RECEIVED_INVITE) {
         lobby_screen_render(game.renderer, &game);

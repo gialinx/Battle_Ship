@@ -39,6 +39,7 @@ typedef struct {
     char username[50];
     char status[20];  // "online" or "offline"
     int elo_rating;
+    int in_game;      // 1 if currently playing, 0 if available
 } UserInfo;
 
 // ==================== INPUT FIELD ====================

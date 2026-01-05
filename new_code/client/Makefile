@@ -14,6 +14,7 @@ $(CLIENT): src/client/client_gui_complete.c \
            src/ui/screens/lobby_screen.c \
            src/ui/screens/profile_screen.c \
            src/ui/screens/matchmaking_screen.c \
+           src/ui/screens/match_found_screen.c \
            src/ui/screens/invitation_screen.c \
            src/ui/screens/placing_ships_screen.c \
            src/ui/screens/playing_screen.c \
@@ -27,6 +28,7 @@ $(CLIENT): src/client/client_gui_complete.c \
 		src/ui/screens/lobby_screen.c \
 		src/ui/screens/profile_screen.c \
 		src/ui/screens/matchmaking_screen.c \
+		src/ui/screens/match_found_screen.c \
 		src/ui/screens/invitation_screen.c \
 		src/ui/screens/placing_ships_screen.c \
 		src/ui/screens/playing_screen.c \

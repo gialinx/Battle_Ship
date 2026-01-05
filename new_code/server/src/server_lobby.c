@@ -256,12 +256,14 @@ void handle_get_users(Client* client) {
         if(clients[i].fd > 0 && clients[i].is_authenticated) {
             UserProfile profile;
             if(db_get_user_profile(clients[i].user_id, &profile) == 0) {
+                // Format: user_id,username,status,elo_rating,in_game
                 offset += snprintf(response + offset, BUFF_SIZE - offset,
-                    "%d,%s,%s,%d:",
+                    "%d,%s,%s,%d,%d:",
                     profile.user_id,
                     profile.username,
                     profile.status,
-                    profile.elo_rating
+                    profile.elo_rating,
+                    clients[i].in_game  // Add in_game status
                 );
             }
         }
@@ -306,7 +308,10 @@ void handle_invite(Client* client, char* buffer) {
         send_to_client(client->fd, "INVITE_FAIL:User not available#");
     } else if(target->in_game) {
         printf("INVITE DEBUG: User %d (%s) already in game\n", target_user_id, target->username);
-        send_to_client(client->fd, "INVITE_FAIL:User not available#");
+        send_to_client(client->fd, "INVITE_FAIL:Player is busy in game#");
+    } else if(client->in_game) {
+        printf("INVITE DEBUG: You (%s) are already in game\n", client->username);
+        send_to_client(client->fd, "INVITE_FAIL:You are already in game#");
     } else {
         // All checks passed - send invite
         char msg[256];
@@ -831,6 +836,103 @@ void handle_cancel_match(Client* client) {
     }
 }
 
+// ==================== HANDLE ACCEPT_MATCH ====================
+void handle_accept_match(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    
+    if(client->opponent_id <= 0) {
+        send_to_client(client->fd, "ERROR:No match found#");
+        pthread_mutex_unlock(&clients_lock);
+        return;
+    }
+    
+    Client* opponent = find_client_by_user_id(client->opponent_id);
+    if(!opponent) {
+        send_to_client(client->fd, "ERROR:Opponent disconnected#");
+        client->opponent_id = -1;
+        pthread_mutex_unlock(&clients_lock);
+        return;
+    }
+    
+    // Mark this client as ready to start
+    client->is_ready = 1;
+    
+    // Check if opponent also accepted
+    if(opponent->is_ready == 1) {
+        // Both accepted! Start the game
+        client->in_game = 1;
+        opponent->in_game = 1;
+        
+        // Reset game data for new match
+        init_map(client->map);
+        init_map(client->enemy_map);
+        init_map(opponent->map);
+        init_map(opponent->enemy_map);
+        client->ship_count = 0;
+        opponent->ship_count = 0;
+        client->total_shots = 0;
+        opponent->total_shots = 0;
+        client->total_hits = 0;
+        opponent->total_hits = 0;
+        client->is_ready = 0;  // Reset for ship placement phase
+        opponent->is_ready = 0;
+        
+        // Send confirmation to both
+        send_to_client(client->fd, "MATCH_ACCEPTED:GAME_START#");
+        send_to_client(opponent->fd, "MATCH_ACCEPTED:GAME_START#");
+        
+        printf("[MATCH] Both players accepted: %s vs %s - Game starting!\n", 
+               client->username, opponent->username);
+    } else {
+        // Wait for opponent to accept
+        send_to_client(client->fd, "MATCH_ACCEPTED:WAITING_OPPONENT#");
+        send_to_client(opponent->fd, "OPPONENT_ACCEPTED#");
+        printf("[MATCH] %s accepted, waiting for %s\n", client->username, opponent->username);
+    }
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE DECLINE_MATCH ====================
+void handle_decline_match(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    
+    if(client->opponent_id <= 0) {
+        send_to_client(client->fd, "ERROR:No match found#");
+        pthread_mutex_unlock(&clients_lock);
+        return;
+    }
+    
+    Client* opponent = find_client_by_user_id(client->opponent_id);
+    
+    // Notify opponent that match was declined
+    if(opponent) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "MATCH_DECLINED:%s#", client->username);
+        send_to_client(opponent->fd, msg);
+        opponent->opponent_id = -1;
+        opponent->is_ready = 0;
+        printf("[MATCH] %s declined match with %s\n", client->username, opponent->username);
+    }
+    
+    // Clear match state
+    send_to_client(client->fd, "MATCH_DECLINED:OK#");
+    client->opponent_id = -1;
+    client->is_ready = 0;
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
 // ==================== CLIENT HANDLER ====================
 void* client_handler(void* arg) {
     Client* client = (Client*)arg;
@@ -905,6 +1007,12 @@ void* client_handler(void* arg) {
             else if(strcmp(cmd, "CANCEL_MATCH#") == 0) {
                 handle_cancel_match(client);
             }
+            else if(strcmp(cmd, "ACCEPT_MATCH#") == 0) {
+                handle_accept_match(client);
+            }
+            else if(strcmp(cmd, "DECLINE_MATCH#") == 0) {
+                handle_decline_match(client);
+            }
             else if(strcmp(cmd, "LOGOUT#") == 0) {
                 handle_logout(client);
             }
@@ -966,21 +1074,21 @@ void* matchmaking_thread(void *arg) {
                 if(db_get_user_profile(player1_id, &profile1) == 0 &&
                    db_get_user_profile(player2_id, &profile2) == 0) {
                     
-                    // Send MATCH_FOUND to both clients
+                    // Send MATCH_FOUND to both clients (with opponent_id)
                     char msg1[256], msg2[256];
-                    snprintf(msg1, sizeof(msg1), "MATCH_FOUND:%s:%d#", 
-                             profile2.username, profile2.elo_rating);
-                    snprintf(msg2, sizeof(msg2), "MATCH_FOUND:%s:%d#", 
-                             profile1.username, profile1.elo_rating);
+                    snprintf(msg1, sizeof(msg1), "MATCH_FOUND:%s:%d:%d#", 
+                             profile2.username, player2_id, profile2.elo_rating);
+                    snprintf(msg2, sizeof(msg2), "MATCH_FOUND:%s:%d:%d#", 
+                             profile1.username, player1_id, profile1.elo_rating);
                     
                     send(client1->fd, msg1, strlen(msg1), 0);
                     send(client2->fd, msg2, strlen(msg2), 0);
                     
-                    // Set up game state and reset maps
+                    // Store opponent info but don't start game yet (wait for accept)
                     client1->opponent_id = player2_id;
                     client2->opponent_id = player1_id;
-                    client1->in_game = 1;
-                    client2->in_game = 1;
+                    client1->in_game = 0;  // Will be set to 1 when both accept
+                    client2->in_game = 0;
                     client1->is_ready = 0;
                     client2->is_ready = 0;
                     

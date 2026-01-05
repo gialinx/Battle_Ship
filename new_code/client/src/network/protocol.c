@@ -175,11 +175,13 @@ int parse_users_list(GameData* game, const char* msg) {
     ptr = strchr(ptr, ':') + 1;
     
     for(int i=0; i<game->user_count && i < 20; i++) {
-        sscanf(ptr, "%d,%[^,],%[^,],%d", 
+        // Format: user_id,username,status,elo_rating,in_game
+        sscanf(ptr, "%d,%[^,],%[^,],%d,%d", 
                &game->users[i].user_id,
                game->users[i].username,
                game->users[i].status,
-               &game->users[i].elo_rating);
+               &game->users[i].elo_rating,
+               &game->users[i].in_game);
         ptr = strchr(ptr + 1, ':');
         if(!ptr) break;
         ptr++;
@@ -457,22 +459,25 @@ int parse_server_message(GameData* game, const char* msg) {
         return 1;
     }
     if(strncmp(msg, "MATCH_FOUND:", 12) == 0) {
-        // Format: MATCH_FOUND:opponent_name:opponent_elo
+        // Format: MATCH_FOUND:opponent_name:opponent_id:opponent_elo
         char opponent_name[50];
+        int opponent_id = 0;
         int opponent_elo = 0;
         
-        sscanf(msg + 12, "%[^:]:%d", opponent_name, &opponent_elo);
+        sscanf(msg + 12, "%[^:]:%d:%d", opponent_name, &opponent_id, &opponent_elo);
         
         strcpy(game->matched_opponent_name, opponent_name);
+        game->matched_opponent_id = opponent_id;
         game->matched_opponent_elo = opponent_elo;
         game->matchmaking_active = 0;
         
-        // Transition to placing ships
-        game->state = STATE_PLACING_SHIPS;
+        // Transition to match found screen (wait for accept/decline)
+        game->state = STATE_MATCH_FOUND;
         
         snprintf(game->message, sizeof(game->message), 
-                "Match found! vs %s (ELO: %d)", opponent_name, opponent_elo);
-        printf("CLIENT: Match found! Opponent: %s (ELO: %d)\n", opponent_name, opponent_elo);
+                "Match found! vs %s (ID:%d, ELO:%d)", opponent_name, opponent_id, opponent_elo);
+        printf("CLIENT: Match found! Opponent: %s (ID:%d, ELO:%d)\n", 
+               opponent_name, opponent_id, opponent_elo);
         return 1;
     }
     if(strncmp(msg, "MM_ERROR", 8) == 0) {
@@ -480,6 +485,40 @@ int parse_server_message(GameData* game, const char* msg) {
         game->matchmaking_active = 0;
         strcpy(game->message, "Matchmaking error!");
         printf("CLIENT: Matchmaking error\n");
+        return 1;
+    }
+    if(strncmp(msg, "MATCH_ACCEPTED:", 15) == 0) {
+        if(strstr(msg, "GAME_START") != NULL) {
+            // Both players accepted - start game
+            game->state = STATE_PLACING_SHIPS;
+            strcpy(game->message, "Match accepted! Place your ships.");
+            printf("CLIENT: Both players accepted - starting game\n");
+        } else if(strstr(msg, "WAITING_OPPONENT") != NULL) {
+            // Waiting for opponent to accept
+            strcpy(game->message, "Waiting for opponent to accept...");
+            printf("CLIENT: Waiting for opponent to accept\n");
+        }
+        return 1;
+    }
+    if(strncmp(msg, "OPPONENT_ACCEPTED", 17) == 0) {
+        strcpy(game->message, "Opponent accepted! Waiting for you...");
+        printf("CLIENT: Opponent accepted the match\n");
+        return 1;
+    }
+    if(strncmp(msg, "MATCH_DECLINED:", 15) == 0) {
+        if(strstr(msg, "OK") != NULL) {
+            // You declined
+            game->state = STATE_LOBBY;
+            strcpy(game->message, "Match declined.");
+            printf("CLIENT: You declined the match\n");
+        } else {
+            // Opponent declined
+            char opponent_name[50];
+            sscanf(msg + 15, "%[^#]", opponent_name);
+            game->state = STATE_LOBBY;
+            snprintf(game->message, sizeof(game->message), "%s declined the match.", opponent_name);
+            printf("CLIENT: Opponent %s declined\n", opponent_name);
+        }
         return 1;
     }
 

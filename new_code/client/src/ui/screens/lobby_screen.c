@@ -262,27 +262,44 @@ void render_player_list(SDL_Renderer* renderer, GameData* game) {
 
         SDL_Rect player_rect = {list_x + 5, y, PLAYER_LIST_WIDTH - 10, 60};
 
-        // Hover effect
-        if(mx >= player_rect.x && mx <= player_rect.x + player_rect.w &&
+        // Check if user is in game
+        int is_busy = u->in_game;
+
+        // Hover effect (disabled if busy)
+        if(is_busy) {
+            SDL_SetRenderDrawColor(renderer, 30, 35, 40, 255);  // Dark gray for busy
+        } else if(mx >= player_rect.x && mx <= player_rect.x + player_rect.w &&
            my >= player_rect.y && my <= player_rect.y + player_rect.h) {
-            SDL_SetRenderDrawColor(renderer, 60, 80, 110, 255);
+            SDL_SetRenderDrawColor(renderer, 60, 80, 110, 255);  // Hover
         } else {
-            SDL_SetRenderDrawColor(renderer, 50, 60, 80, 255);
+            SDL_SetRenderDrawColor(renderer, 50, 60, 80, 255);  // Normal
         }
         SDL_RenderFillRect(renderer, &player_rect);
-        SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        
+        if(is_busy) {
+            SDL_SetRenderDrawColor(renderer, 60, 60, 60, 255);  // Darker border
+        } else {
+            SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        }
         SDL_RenderDrawRect(renderer, &player_rect);
 
         // Player info
-        render_text(renderer, game->font_small, u->username, list_x + 15, y + 5, white);
+        SDL_Color name_color = is_busy ? (SDL_Color){120, 120, 120, 255} : white;
+        render_text(renderer, game->font_small, u->username, list_x + 15, y + 5, name_color);
 
         char elo_text[50];
         snprintf(elo_text, sizeof(elo_text), "ELO: %d", u->elo_rating);
-        render_text(renderer, game->font_small, elo_text, list_x + 15, y + 25, gray);
+        SDL_Color elo_color = is_busy ? (SDL_Color){90, 90, 90, 255} : gray;
+        render_text(renderer, game->font_small, elo_text, list_x + 15, y + 25, elo_color);
 
         // Status
-        SDL_Color status_color = strcmp(u->status, "online") == 0 ? green : gray;
-        render_text(renderer, game->font_small, u->status, list_x + 200, y + 25, status_color);
+        if(is_busy) {
+            SDL_Color busy_color = {255, 150, 50, 255};  // Orange
+            render_text(renderer, game->font_small, "In Game", list_x + 200, y + 15, busy_color);
+        } else {
+            SDL_Color status_color = strcmp(u->status, "online") == 0 ? green : gray;
+            render_text(renderer, game->font_small, u->status, list_x + 200, y + 25, status_color);
+        }
 
         y += 65;
         displayed_count++;
@@ -390,6 +407,15 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
 
         if(x >= list_x + 5 && x <= list_x + PLAYER_LIST_WIDTH - 5 &&
            y >= list_y && y <= list_y + 60) {
+            
+            // Check if user is busy in game
+            if(u->in_game) {
+                snprintf(game->message, sizeof(game->message), 
+                        "%s is busy in game. Cannot invite!", u->username);
+                printf("CLIENT: Cannot invite %s - player is in game\n", u->username);
+                return;
+            }
+            
             if(strcmp(u->status, "online") == 0) {
                 game->invited_user_id = u->user_id;
                 strcpy(game->invited_username, u->username);
