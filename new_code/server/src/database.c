@@ -292,7 +292,13 @@ int db_get_user_profile(int user_id, UserProfile* profile) {
 }
 
 int db_save_match(MatchHistory* match) {
+    printf("DEBUG db_save_match: Starting save for P1:%d vs P2:%d\n", 
+           match->player1_id, match->player2_id);
+    
     db_update_elo_after_match(match);
+    
+    printf("DEBUG db_save_match: After ELO update - P1 gain:%d, P2 gain:%d\n",
+           match->player1_elo_gain, match->player2_elo_gain);
     
     const char* sql = "INSERT INTO match_history (player1_id, player2_id, winner_id, "
                       "player1_score, player2_score, player1_elo_before, player2_elo_before, "
@@ -303,7 +309,10 @@ int db_save_match(MatchHistory* match) {
     sqlite3_stmt* stmt;
 
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return -1;
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "ERROR db_save_match: prepare failed: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
 
     sqlite3_bind_int(stmt, 1, match->player1_id);
     sqlite3_bind_int(stmt, 2, match->player2_id);
@@ -325,12 +334,18 @@ int db_save_match(MatchHistory* match) {
     sqlite3_bind_int(stmt, 18, match->game_duration_seconds);
     sqlite3_bind_text(stmt, 19, match->match_data, -1, SQLITE_STATIC);
 
+    printf("DEBUG db_save_match: Executing INSERT...\n");
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
-    if (rc != SQLITE_DONE) return -1;
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "ERROR db_save_match: step failed: %s (rc=%d)\n", sqlite3_errmsg(db), rc);
+        return -1;
+    }
 
-    return sqlite3_last_insert_rowid(db);
+    int match_id = sqlite3_last_insert_rowid(db);
+    printf("DEBUG db_save_match: Success! Match ID = %d\n", match_id);
+    return match_id;
 }
 
 int db_get_match_history(int user_id, MatchHistory** matches, int* count) {
@@ -338,7 +353,8 @@ int db_get_match_history(int user_id, MatchHistory** matches, int* count) {
                       "player1_score, player2_score, player1_elo_before, player2_elo_before, "
                       "player1_elo_gain, player2_elo_gain, player1_elo_after, player2_elo_after, "
                       "player1_hit_diff, player2_hit_diff, player1_accuracy, player2_accuracy, "
-                      "match_data, played_at "
+                      "player1_total_shots, player2_total_shots, game_duration_seconds, "
+                      "match_data, strftime('%s', played_at) as played_timestamp "
                       "FROM match_history WHERE player1_id = ? OR player2_id = ? "
                       "ORDER BY played_at DESC LIMIT 20;";
     sqlite3_stmt* stmt;
@@ -371,8 +387,11 @@ int db_get_match_history(int user_id, MatchHistory** matches, int* count) {
         m->player2_hit_diff = sqlite3_column_int(stmt, 13);
         m->player1_accuracy = sqlite3_column_double(stmt, 14);
         m->player2_accuracy = sqlite3_column_double(stmt, 15);
-        strcpy(m->match_data, (const char*)sqlite3_column_text(stmt, 16));
-        m->played_at = sqlite3_column_int(stmt, 17);
+        m->player1_total_shots = sqlite3_column_int(stmt, 16);
+        m->player2_total_shots = sqlite3_column_int(stmt, 17);
+        m->game_duration_seconds = sqlite3_column_int(stmt, 18);
+        strcpy(m->match_data, (const char*)sqlite3_column_text(stmt, 19));
+        m->played_at = sqlite3_column_int64(stmt, 20);
         (*count)++;
     }
 

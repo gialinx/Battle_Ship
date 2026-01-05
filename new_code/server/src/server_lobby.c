@@ -46,6 +46,9 @@ typedef struct {
     int total_shots;                     // Tổng số lần bắn
     int total_hits;                      // Số lần bắn trúng
     time_t game_start_time;              // Thời điểm bắt đầu game
+    
+    // Shot history tracking (for match replay)
+    char shot_log[4096];                 // Log của từng shot: "x,y,hit,ship_len,sunk;"
 } Client;
 
 Client clients[MAX_CLIENTS];
@@ -635,6 +638,11 @@ void handle_fire(Client* client, char* buffer) {
         snprintf(res, sizeof(res), "RESULT:MISS,%d,%d#", x+1, y+1);
         send_to_client(client->fd, res);
         printf("DEBUG: %s MISS at (%d,%d)\n", client->username, x+1, y+1);
+        
+        // Log shot: x,y,hit(0=miss),ship_len(0),sunk(0)
+        char shot_entry[50];
+        snprintf(shot_entry, sizeof(shot_entry), "%d,%d,0,0,0;", x, y);
+        strcat(client->shot_log, shot_entry);
 
         // Switch turn
         client->is_my_turn = 0;
@@ -655,13 +663,17 @@ void handle_fire(Client* client, char* buffer) {
         client->total_hits++;
 
         // Find and update ship
+        int hit_ship_len = 0;
+        int ship_sunk = 0;
         for(int s=0; s<opponent->ship_count; s++) {
             Ship *sh = &opponent->ships[s];
             for(int k=0; k<sh->length; k++) {
                 if(sh->x[k] == x && sh->y[k] == y) {
                     sh->hits++;
+                    hit_ship_len = sh->length;
                     if(sh->hits == sh->length) {
                         sh->alive = 0;
+                        ship_sunk = 1;
                         mark_sunk(opponent, client);
                         printf("DEBUG: %s sunk a ship (length %d)\n",
                                client->username, sh->length);
@@ -670,6 +682,12 @@ void handle_fire(Client* client, char* buffer) {
                 }
             }
         }
+        
+        // Log shot: x,y,hit(1),ship_len,sunk
+        char shot_entry[50];
+        snprintf(shot_entry, sizeof(shot_entry), "%d,%d,1,%d,%d;", 
+                x, y, hit_ship_len, ship_sunk);
+        strcat(client->shot_log, shot_entry);
 
         char res[64];
         snprintf(res, sizeof(res), "RESULT:HIT,%d,%d#", x+1, y+1);
@@ -677,13 +695,17 @@ void handle_fire(Client* client, char* buffer) {
         printf("DEBUG: %s HIT at (%d,%d)\n", client->username, x+1, y+1);
 
         // Check if all opponent ships are sunk
+        printf("DEBUG: Checking if game over... opponent has %d ships\n", opponent->ship_count);
         int opponent_alive = 0;
         for(int s=0; s<opponent->ship_count; s++) {
+            printf("DEBUG:   Ship %d: length=%d, alive=%d\n", 
+                   s, opponent->ships[s].length, opponent->ships[s].alive);
             if(opponent->ships[s].alive) {
                 opponent_alive = 1;
                 break;
             }
         }
+        printf("DEBUG: opponent_alive = %d\n", opponent_alive);
 
         if(!opponent_alive) {
             // Game over - client wins
@@ -712,9 +734,26 @@ void handle_fire(Client* client, char* buffer) {
             match.player2_accuracy = opponent_accuracy;
             match.game_duration_seconds = game_duration;
             
+            // Build match_data with interleaved shots
+            // Format: p1_shot1;p2_shot1;p1_shot2;p2_shot2;...
+            // But we have sequential logs, so store as: P1_SHOTS|P2_SHOTS
+            snprintf(match.match_data, sizeof(match.match_data), "%s|%s", 
+                    client->shot_log, opponent->shot_log);
+            
+            printf("SERVER: Match data saved (%zu bytes)\n", strlen(match.match_data));
+            
             // Calculate and update ELO
             db_update_elo_after_match(&match);
-            db_save_match(&match);
+            
+            printf("SERVER: Saving match - P1:%d vs P2:%d, Winner:%d, Duration:%ds\n",
+                   match.player1_id, match.player2_id, match.winner_id, match.game_duration_seconds);
+            
+            int match_id = db_save_match(&match);
+            if(match_id > 0) {
+                printf("SERVER: Match saved successfully with ID %d\n", match_id);
+            } else {
+                printf("SERVER: ERROR - Failed to save match to database!\n");
+            }
             
             // Update user stats
             db_update_score(client->user_id, 1, 1);  // Win
@@ -752,6 +791,107 @@ void handle_fire(Client* client, char* buffer) {
     }
 
     pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE GET_MATCH_HISTORY ====================
+void handle_get_match_history(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+
+    printf("SERVER: GET_MATCH_HISTORY request from user_id=%d (%s)\n", 
+           client->user_id, client->username);
+
+    MatchHistory* matches;
+    int count = 0;
+    
+    if(db_get_match_history(client->user_id, &matches, &count) != 0) {
+        printf("SERVER: Failed to get match history from database\n");
+        send_to_client(client->fd, "ERROR:Failed to get match history#");
+        return;
+    }
+
+    printf("SERVER: Found %d matches for user %s\n", count, client->username);
+
+    // Build response: MATCH_HISTORY:count:match1_data|match2_data|...#
+    char response[BUFF_SIZE * 2];
+    int offset = 0;
+    offset += snprintf(response + offset, sizeof(response) - offset, "MATCH_HISTORY:%d", count);
+
+    for(int i = 0; i < count; i++) {
+        MatchHistory* m = &matches[i];
+        
+        // Determine if this user was player1 or player2
+        int is_player1 = (m->player1_id == client->user_id);
+        int opponent_id = is_player1 ? m->player2_id : m->player1_id;
+        int my_shots = is_player1 ? m->player1_total_shots : m->player2_total_shots;
+        int my_hits = is_player1 ? (m->player1_total_shots > 0 ? (int)(m->player1_accuracy * my_shots / 100.0f) : 0) 
+                                 : (m->player2_total_shots > 0 ? (int)(m->player2_accuracy * my_shots / 100.0f) : 0);
+        int my_misses = my_shots - my_hits;
+        int my_elo_change = is_player1 ? m->player1_elo_gain : m->player2_elo_gain;
+        int is_win = (m->winner_id == client->user_id) ? 1 : 0;
+        
+        // Get opponent username
+        UserProfile opp_profile;
+        char opponent_name[50] = "Unknown";
+        if(db_get_user_profile(opponent_id, &opp_profile) == 0) {
+            strcpy(opponent_name, opp_profile.username);
+        }
+        
+        printf("SERVER: Match %d - opponent: %s, result: %s, elo: %+d\n",
+               m->match_id, opponent_name, is_win ? "WIN" : "LOSS", my_elo_change);
+        
+        // Format: |match_id,timestamp,opponent_id,opponent_name,is_win,hits,misses,elo_change,duration
+        offset += snprintf(response + offset, sizeof(response) - offset, 
+                          "|%d,%ld,%d,%s,%d,%d,%d,%+d,%d",
+                          m->match_id, m->played_at, opponent_id, opponent_name,
+                          is_win, my_hits, my_misses, my_elo_change, m->game_duration_seconds);
+    }
+
+    offset += snprintf(response + offset, sizeof(response) - offset, "#");
+    
+    printf("SERVER: Sending response: %s\n", response);
+    send_to_client(client->fd, response);
+    
+    free(matches);
+}
+
+// ==================== HANDLE GET_MATCH_DETAIL ====================
+void handle_get_match_detail(Client* client, const char* cmd) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+
+    // Parse: GET_MATCH_DETAIL:match_id#
+    int match_id;
+    if(sscanf(cmd, "GET_MATCH_DETAIL:%d#", &match_id) != 1) {
+        send_to_client(client->fd, "ERROR:Invalid match detail request#");
+        return;
+    }
+
+    MatchHistory match;
+    if(db_get_match_for_rewatch(match_id, &match) != 0) {
+        send_to_client(client->fd, "ERROR:Match not found#");
+        return;
+    }
+
+    // Verify this user was part of the match
+    if(match.player1_id != client->user_id && match.player2_id != client->user_id) {
+        send_to_client(client->fd, "ERROR:Access denied#");
+        return;
+    }
+
+    // Parse match_data (format: "x,y,hit,ship_len,sunk;x,y,hit,ship_len,sunk;...")
+    // match_data should contain alternating shots: p1_shot1;p2_shot1;p1_shot2;p2_shot2;...
+    
+    // Build response: MATCH_DETAIL:match_id:my_shots_data|opponent_shots_data#
+    // shots_data format: x,y,hit,ship_len,sunk;x,y,hit,ship_len,sunk;...
+    
+    char response[BUFF_SIZE * 2];
+    snprintf(response, sizeof(response), "MATCH_DETAIL:%d:%s#", match_id, match.match_data);
+    send_to_client(client->fd, response);
 }
 
 // ==================== HANDLE GET_LEADERBOARD ====================
@@ -1001,6 +1141,12 @@ void* client_handler(void* arg) {
             else if(strcmp(cmd, "GET_LEADERBOARD#") == 0) {
                 handle_get_leaderboard(client);
             }
+            else if(strcmp(cmd, "GET_MATCH_HISTORY#") == 0) {
+                handle_get_match_history(client);
+            }
+            else if(strncmp(cmd, "GET_MATCH_DETAIL:", 17) == 0) {
+                handle_get_match_detail(client, cmd);
+            }
             else if(strcmp(cmd, "FIND_MATCH#") == 0) {
                 handle_find_match(client);
             }
@@ -1117,6 +1263,11 @@ void* matchmaking_thread(void *arg) {
 
 // ==================== MAIN ====================
 int main() {
+    printf("========================================\n");
+    printf("BATTLESHIP SERVER WITH MATCH HISTORY\n");
+    printf("Version: 2026-01-05 with db_save_match debug\n");
+    printf("========================================\n");
+    
     // Initialize database
     if(db_init() != 0) {
         fprintf(stderr, "Failed to initialize database\n");
