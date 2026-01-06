@@ -195,6 +195,7 @@ typedef struct {
     int selected_ship_length;
     int selected_ship_id;
     int ship_horizontal;
+    int last_placed_ship_length;  // Track last ship placed for PLACE_OK confirmation
     int ships_to_place[4];             // {4, 3, 2, 2}
     int ships_placed_count[5];         // Index by ship length [0,1,2,3,4]
     int ships_placed_countMax[5];      // Max count for each ship length

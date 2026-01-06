@@ -53,14 +53,14 @@ void matchmaking_screen_render(SDL_Renderer* renderer, GameData* game) {
     char elo_msg[100];
     int elo_range = 100;  // Starting range
     if(wait_time >= 120) {
-        elo_range = 9999;
+        elo_range = 99999;
         snprintf(elo_msg, sizeof(elo_msg), "ELO Range: Any (120s+)");
     } else if(wait_time >= 60) {
+        elo_range = 800;
+        snprintf(elo_msg, sizeof(elo_msg), "ELO Range: ±800");
+    } else if(wait_time >= 20) {
         elo_range = 500;
         snprintf(elo_msg, sizeof(elo_msg), "ELO Range: ±500");
-    } else if(wait_time >= 30) {
-        elo_range = 300;
-        snprintf(elo_msg, sizeof(elo_msg), "ELO Range: ±300");
     } else if(wait_time >= 10) {
         elo_range = 200;
         snprintf(elo_msg, sizeof(elo_msg), "ELO Range: ±200");

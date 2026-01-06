@@ -228,12 +228,12 @@ void handle_get_my_stats(Client* client) {
     if(db_get_user_profile(client->user_id, &profile) == 0) {
         char response[BUFF_SIZE];
         snprintf(response, sizeof(response),
-                "MY_STATS:%s:%d:%d:%d:%d#",
+                "MY_STATS:%s:%d:%d:%d:%d:%d#",
                 profile.username, profile.total_games,
-                profile.wins, profile.elo_rating, client->user_id);
+                profile.wins, profile.losses, profile.elo_rating, client->user_id);
         send_to_client(client->fd, response);
-        printf("Sent stats to %s: ELO=%d, Games=%d, Wins=%d\n",
-               profile.username, profile.elo_rating, profile.total_games, profile.wins);
+        printf("Sent stats to %s: ELO=%d, Games=%d, Wins=%d, Losses=%d\n",
+               profile.username, profile.elo_rating, profile.total_games, profile.wins, profile.losses);
     } else {
         send_to_client(client->fd, "ERROR:Failed to get stats#");
     }

@@ -59,35 +59,24 @@ int parse_state_message(GameData* game, const char* state_data) {
         row_tok = strtok(NULL, "\n");
     }
     
-    // Count ships from map
+    // Count ships from map - simple approach: count cells then divide by ship length
     for(int i = 2; i <= 4; i++) game->ships_placed_count[i] = 0;
     
-    int visited[MAP_SIZE][MAP_SIZE] = {0};
+    int cell_count[5] = {0};  // cell_count[2], [3], [4]
+    
     for(int r = 0; r < MAP_SIZE; r++) {
         for(int c = 0; c < MAP_SIZE; c++) {
             char ch = game->own_map[r][c];
-            if(ch >= '2' && ch <= '9' && !visited[r][c]) {
+            if(ch >= '2' && ch <= '4') {
                 int length = ch - '0';
-                
-                // Mark all cells of this ship
-                int ship_len = 0;
-                for(int cc = c; cc < MAP_SIZE && game->own_map[r][cc] == ch; cc++) {
-                    visited[r][cc] = 1;
-                    ship_len++;
-                }
-                
-                if(ship_len == 0) {
-                    for(int rr = r; rr < MAP_SIZE && game->own_map[rr][c] == ch; rr++) {
-                        visited[rr][c] = 1;
-                        ship_len++;
-                    }
-                }
-                
-                if(length >= 2 && length <= 4) {
-                    game->ships_placed_count[length]++;
-                }
+                cell_count[length]++;
             }
         }
+    }
+    
+    // Calculate number of ships: total cells / ship length
+    for(int len = 2; len <= 4; len++) {
+        game->ships_placed_count[len] = cell_count[len] / len;
     }
     
     // Parse ENEMY MAP
@@ -131,11 +120,11 @@ int parse_login_response(GameData* game, const char* msg) {
     
     // Handle MY_STATS response (same format as LOGIN_OK)
     if(strncmp(msg, "MY_STATS:", 9) == 0) {
-        sscanf(msg, "MY_STATS:%[^:]:%d:%d:%d:%d",
+        sscanf(msg, "MY_STATS:%[^:]:%d:%d:%d:%d:%d",
                game->my_username, &game->total_games, &game->wins,
-               &game->my_elo, &game->my_user_id);
-        printf("CLIENT: Updated my stats - ELO: %d, Games: %d, Wins: %d\n",
-               game->my_elo, game->total_games, game->wins);
+               &game->losses, &game->my_elo, &game->my_user_id);
+        printf("CLIENT: Updated my stats - ELO: %d, Games: %d, Wins: %d, Losses: %d\n",
+               game->my_elo, game->total_games, game->wins, game->losses);
         return 1;
     }
     
@@ -391,6 +380,21 @@ int parse_server_message(GameData* game, const char* msg) {
         snprintf(game->message, sizeof(game->message), "HIT! Fire again!");
         return 1;
     }
+    
+    // Fire result (HIT or MISS)
+    if(strncmp(msg, "RESULT:HIT,", 11) == 0) {
+        game->hits_count++;
+        game->total_shots++;
+        // Message already set by playing screen
+        return 1;
+    }
+    if(strncmp(msg, "RESULT:MISS,", 12) == 0) {
+        game->misses_count++;
+        game->total_shots++;
+        // Message already set by playing screen
+        return 1;
+    }
+    
     if(strncmp(msg, "GAME_OVER:WIN:", 14) == 0) {
         // Parse: GAME_OVER:WIN:Opponent surrendered:1564:+25#
         char reason[128];
@@ -492,7 +496,17 @@ int parse_server_message(GameData* game, const char* msg) {
         return 1;
     }
     if(strncmp(msg, "PLACE_OK:", 9) == 0) {
-        snprintf(game->message, sizeof(game->message), "Ship placed successfully!");
+        // Increment counter now that server confirmed placement
+        if(game->last_placed_ship_length > 0) {
+            game->ships_placed_count[game->last_placed_ship_length]++;
+            int max = (game->last_placed_ship_length == 2) ? 2 : 1;
+            snprintf(game->message, sizeof(game->message), "Da dat tau %d o! (%d/%d)",
+                     game->last_placed_ship_length,
+                     game->ships_placed_count[game->last_placed_ship_length], max);
+            game->last_placed_ship_length = 0;  // Reset
+        } else {
+            snprintf(game->message, sizeof(game->message), "Ship placed successfully!");
+        }
         return 1;
     }
     if(strcmp(msg, "READY_OK:") == 0) {
@@ -637,6 +651,15 @@ int parse_server_message(GameData* game, const char* msg) {
     if(strncmp(msg, "MATCH_ACCEPTED:", 15) == 0) {
         if(strstr(msg, "GAME_START") != NULL) {
             // Both players accepted - start game
+            // Reset maps for new game
+            for(int i=0; i<MAP_SIZE; i++) {
+                for(int j=0; j<MAP_SIZE; j++) {
+                    game->own_map[i][j] = '-';
+                    game->enemy_map[i][j] = '-';
+                }
+            }
+            // Reset ship placement state
+            placing_ships_init(game);
             game->state = STATE_PLACING_SHIPS;
             strcpy(game->message, "Match accepted! Place your ships.");
             printf("CLIENT: Both players accepted - starting game\n");
