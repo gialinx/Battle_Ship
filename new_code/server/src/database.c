@@ -262,6 +262,22 @@ int db_update_user_status(int user_id, const char* status) {
     return (rc == SQLITE_DONE) ? 0 : -1;
 }
 
+int db_set_elo(int user_id, int new_elo) {
+    const char* sql = "UPDATE users SET elo_rating = ? WHERE user_id = ?;";
+    sqlite3_stmt* stmt;
+
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return -1;
+
+    sqlite3_bind_int(stmt, 1, new_elo);
+    sqlite3_bind_int(stmt, 2, user_id);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
 int db_get_user_profile(int user_id, UserProfile* profile) {
     const char* sql = "SELECT user_id, username, total_games, wins, losses, total_score, elo_rating, status "
                       "FROM users WHERE user_id = ?;";

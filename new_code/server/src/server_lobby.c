@@ -1073,6 +1073,263 @@ void handle_decline_match(Client* client) {
     pthread_mutex_unlock(&clients_lock);
 }
 
+// ==================== RESET GAME STATE ====================
+void reset_game_state(Client* client) {
+    client->in_game = 0;
+    client->opponent_id = -1;
+    client->is_ready = 0;
+    client->is_my_turn = 0;
+    client->ship_count = 0;
+    client->total_shots = 0;
+    client->total_hits = 0;
+    client->game_start_time = 0;
+    memset(client->shot_log, 0, sizeof(client->shot_log));
+    init_map(client->map);
+    init_map(client->enemy_map);
+}
+
+// ==================== HANDLE FORFEIT ====================
+void handle_forfeit(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    if(!client->in_game || client->opponent_id <= 0) {
+        send_to_client(client->fd, "ERROR:Not in game#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    Client* opponent = find_client_by_user_id(client->opponent_id);
+    
+    if(!opponent) {
+        send_to_client(client->fd, "ERROR:Opponent not found#");
+        reset_game_state(client);
+        pthread_mutex_unlock(&clients_lock);
+        return;
+    }
+    
+    // Determine game phase
+    int during_placement = (!client->is_ready || !opponent->is_ready);
+    
+    if(during_placement) {
+        // During placement - no ELO change, just cancel the match
+        char msg[256];
+        snprintf(msg, sizeof(msg), "OPPONENT_LEFT_PLACEMENT:%s#", client->username);
+        send_to_client(opponent->fd, msg);
+        send_to_client(client->fd, "FORFEIT_PLACEMENT#");
+        
+        // Reset both players
+        reset_game_state(client);
+        reset_game_state(opponent);
+        
+        printf("[FORFEIT] %s quit during placement vs %s (no ELO change)\n", 
+               client->username, opponent->username);
+    } else {
+        // During active game - record as loss
+        UserProfile winner_profile, loser_profile;
+        db_get_user_profile(opponent->user_id, &winner_profile);
+        db_get_user_profile(client->user_id, &loser_profile);
+        
+        // Calculate game duration
+        time_t now = time(NULL);
+        int duration = (client->game_start_time > 0) ? (now - client->game_start_time) : 0;
+        
+        // Create match history
+        MatchHistory match;
+        memset(&match, 0, sizeof(MatchHistory));
+        
+        match.player1_id = opponent->user_id;  // Winner
+        match.player2_id = client->user_id;    // Loser
+        match.winner_id = opponent->user_id;
+        match.player1_score = 100;  // Winner gets full score
+        match.player2_score = 0;    // Forfeit = 0 score
+        
+        // Calculate accuracy
+        match.player1_total_shots = opponent->total_shots;
+        match.player1_accuracy = (opponent->total_shots > 0) ? 
+            ((float)opponent->total_hits / opponent->total_shots) : 0.0f;
+        match.player1_hit_diff = opponent->total_hits;
+        
+        match.player2_total_shots = client->total_shots;
+        match.player2_accuracy = (client->total_shots > 0) ?
+            ((float)client->total_hits / client->total_shots) : 0.0f;
+        match.player2_hit_diff = client->total_hits;
+        
+        match.game_duration_seconds = duration;
+        
+        // Copy shot logs
+        snprintf(match.match_data, sizeof(match.match_data),
+                "P1:%s;P2:%s;FORFEIT", opponent->shot_log, client->shot_log);
+        
+        match.played_at = now;
+        
+        // Save match (this will calculate and update ELO automatically)
+        int match_id = db_save_match(&match);
+        
+        // Update wins/losses
+        db_update_score(opponent->user_id, 100, 1);  // Win
+        db_update_score(client->user_id, 0, 0);      // Loss
+        
+        // Get ELO changes from match struct (updated by db_save_match)
+        int winner_change = match.player1_elo_gain;
+        int loser_change = match.player2_elo_gain;
+        
+        // Send results
+        char win_msg[512];
+        snprintf(win_msg, sizeof(win_msg),
+                "GAME_OVER:WIN:Opponent surrendered:%d:%d#",
+                match.player1_elo_after, winner_change);
+        send_to_client(opponent->fd, win_msg);
+        
+        char lose_msg[512];
+        snprintf(lose_msg, sizeof(lose_msg),
+                "GAME_OVER:LOSE:You surrendered:%d:%d#",
+                match.player2_elo_after, loser_change);
+        send_to_client(client->fd, lose_msg);
+        
+        printf("[FORFEIT] %s surrendered to %s (Match ID=%d, ELO change: %+d vs %+d)\n",
+               client->username, opponent->username, match_id, loser_change, winner_change);
+        
+        // Reset both players
+        reset_game_state(client);
+        reset_game_state(opponent);
+    }
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE SURRENDER_REQUEST ====================
+void handle_surrender_request(Client* client) {
+    if(!client->is_authenticated || !client->in_game || client->opponent_id <= 0) {
+        send_to_client(client->fd, "ERROR:Not in game#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    Client* opponent = find_client_by_user_id(client->opponent_id);
+    
+    if(!opponent) {
+        send_to_client(client->fd, "ERROR:Opponent not found#");
+        pthread_mutex_unlock(&clients_lock);
+        return;
+    }
+    
+    // Send surrender request to opponent
+    char msg[256];
+    snprintf(msg, sizeof(msg), "SURRENDER_REQUEST_FROM:%s#", client->username);
+    send_to_client(opponent->fd, msg);
+    
+    printf("[SURRENDER] %s requested surrender to %s\n", client->username, opponent->username);
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE SURRENDER_ACCEPT ====================
+void handle_surrender_accept(Client* client) {
+    if(!client->is_authenticated || !client->in_game || client->opponent_id <= 0) {
+        send_to_client(client->fd, "ERROR:Not in game#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    Client* surrenderer = find_client_by_user_id(client->opponent_id);
+    
+    if(!surrenderer) {
+        pthread_mutex_unlock(&clients_lock);
+        return;
+    }
+    
+    // Client accepts, surrenderer loses
+    UserProfile winner_profile, loser_profile;
+    db_get_user_profile(client->user_id, &winner_profile);
+    db_get_user_profile(surrenderer->user_id, &loser_profile);
+    
+    // Calculate game duration
+    time_t now = time(NULL);
+    int duration = (client->game_start_time > 0) ? (now - client->game_start_time) : 0;
+    
+    // Create match history
+    MatchHistory match;
+    memset(&match, 0, sizeof(MatchHistory));
+    
+    match.player1_id = client->user_id;      // Winner
+    match.player2_id = surrenderer->user_id; // Loser (surrendered)
+    match.winner_id = client->user_id;
+    match.player1_score = 100;
+    match.player2_score = 0;
+    
+    match.player1_total_shots = client->total_shots;
+    match.player1_accuracy = (client->total_shots > 0) ? 
+        ((float)client->total_hits / client->total_shots) : 0.0f;
+    match.player1_hit_diff = client->total_hits;
+    
+    match.player2_total_shots = surrenderer->total_shots;
+    match.player2_accuracy = (surrenderer->total_shots > 0) ?
+        ((float)surrenderer->total_hits / surrenderer->total_shots) : 0.0f;
+    match.player2_hit_diff = surrenderer->total_hits;
+    
+    match.game_duration_seconds = duration;
+    
+    snprintf(match.match_data, sizeof(match.match_data),
+            "P1:%s;P2:%s;SURRENDER", client->shot_log, surrenderer->shot_log);
+    
+    match.played_at = now;
+    
+    // Save match (will calculate ELO)
+    int match_id = db_save_match(&match);
+    
+    // Update wins/losses
+    db_update_score(client->user_id, 100, 1);       // Win
+    db_update_score(surrenderer->user_id, 0, 0);    // Loss
+    
+    // For surrender: winner gets 0 ELO change, loser still loses ELO as penalty
+    int winner_change = 0;  // No ELO gain for winning via surrender
+    int loser_change = match.player2_elo_gain;  // Loser still loses ELO
+    
+    // Revert winner's ELO back to original (before the match calculation)
+    db_set_elo(client->user_id, match.player1_elo_before);
+    
+    // Send results
+    char win_msg[512];
+    snprintf(win_msg, sizeof(win_msg),
+            "GAME_OVER:WIN:Opponent surrendered:%d:%d#",
+            match.player1_elo_before, winner_change);
+    send_to_client(client->fd, win_msg);
+    
+    char lose_msg[512];
+    snprintf(lose_msg, sizeof(lose_msg),
+            "GAME_OVER:LOSE:You surrendered:%d:%d#",
+            match.player2_elo_after, loser_change);
+    send_to_client(surrenderer->fd, lose_msg);
+    
+    printf("[SURRENDER] %s surrendered to %s (Match ID=%d)\n",
+           surrenderer->username, client->username, match_id);
+    
+    reset_game_state(client);
+    reset_game_state(surrenderer);
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE SURRENDER_DECLINE ====================
+void handle_surrender_decline(Client* client) {
+    if(!client->is_authenticated || !client->in_game || client->opponent_id <= 0) {
+        send_to_client(client->fd, "ERROR:Not in game#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    Client* surrenderer = find_client_by_user_id(client->opponent_id);
+    
+    if(surrenderer) {
+        send_to_client(surrenderer->fd, "SURRENDER_DECLINED#");
+        printf("[SURRENDER] %s declined surrender from %s\n", 
+               client->username, surrenderer->username);
+    }
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
 // ==================== CLIENT HANDLER ====================
 void* client_handler(void* arg) {
     Client* client = (Client*)arg;
@@ -1158,6 +1415,18 @@ void* client_handler(void* arg) {
             }
             else if(strcmp(cmd, "DECLINE_MATCH#") == 0) {
                 handle_decline_match(client);
+            }
+            else if(strcmp(cmd, "FORFEIT#") == 0) {
+                handle_forfeit(client);
+            }
+            else if(strcmp(cmd, "SURRENDER_REQUEST#") == 0) {
+                handle_surrender_request(client);
+            }
+            else if(strcmp(cmd, "SURRENDER_ACCEPT#") == 0) {
+                handle_surrender_accept(client);
+            }
+            else if(strcmp(cmd, "SURRENDER_DECLINE#") == 0) {
+                handle_surrender_decline(client);
             }
             else if(strcmp(cmd, "LOGOUT#") == 0) {
                 handle_logout(client);

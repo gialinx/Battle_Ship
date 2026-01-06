@@ -21,6 +21,9 @@ $(CLIENT): src/client/client_gui_complete.c \
            src/ui/screens/game_over_screen.c \
            src/ui/screens/match_history_screen.c \
            src/ui/screens/match_detail_screen.c \
+           src/ui/screens/confirmation_dialog.c \
+           src/ui/screens/opponent_quit_screen.c \
+           src/ui/screens/surrender_request_screen.c \
            src/network/protocol.c \
            src/network/network.c \
            src/core/assets.c
@@ -37,6 +40,9 @@ $(CLIENT): src/client/client_gui_complete.c \
 		src/ui/screens/game_over_screen.c \
 		src/ui/screens/match_history_screen.c \
 		src/ui/screens/match_detail_screen.c \
+		src/ui/screens/confirmation_dialog.c \
+		src/ui/screens/opponent_quit_screen.c \
+		src/ui/screens/surrender_request_screen.c \
 		src/network/protocol.c \
 		src/network/network.c \
 		src/core/assets.c \

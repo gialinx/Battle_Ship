@@ -47,6 +47,7 @@ int db_register_user(const char* username, const char* password);
 int db_login_user(const char* username, const char* password, UserProfile* profile);
 int db_logout_user(int user_id);
 int db_update_user_status(int user_id, const char* status);
+int db_set_elo(int user_id, int new_elo);
 int db_get_user_profile(int user_id, UserProfile* profile);
 int db_save_match(MatchHistory* match);
 int db_get_match_history(int user_id, MatchHistory** matches, int* count);

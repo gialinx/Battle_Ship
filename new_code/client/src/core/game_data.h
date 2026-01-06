@@ -23,6 +23,9 @@ typedef enum {
     STATE_PLACING_SHIPS,   // Đặt tàu
     STATE_WAITING_READY,   // Chờ đối thủ READY
     STATE_PLAYING,         // Đang chơi
+    STATE_WAITING_SURRENDER_APPROVAL, // Chờ đối thủ approve surrender
+    STATE_RECEIVED_SURRENDER_REQUEST, // Nhận surrender request từ đối thủ
+    STATE_OPPONENT_QUIT_PLACEMENT,    // Đối thủ quit trong placement
     STATE_GAME_OVER,       // Kết thúc
     STATE_MATCH_HISTORY,   // Xem lịch sử các trận
     STATE_MATCH_DETAIL     // Xem chi tiết một trận
@@ -173,6 +176,10 @@ typedef struct {
     int inviter_user_id;
     char inviter_username[50];
     
+    // Surrender system
+    char surrender_requester_name[50];
+    char opponent_quit_name[50];
+    
     // Maps
     char own_map[MAP_SIZE][MAP_SIZE];
     char enemy_map[MAP_SIZE][MAP_SIZE];
@@ -209,6 +216,16 @@ typedef struct {
     int total_shots;           // Tổng số shots đã bắn
     int hits_count;            // Số lần bắn trúng
     int misses_count;          // Số lần bắn trượt
+    
+    // Confirmation dialog (forward declaration)
+    struct {
+        int type;              // DialogType enum
+        int visible;
+        char title[100];
+        char message[300];
+        char button1_text[20];
+        char button2_text[20];
+    } confirmation_dialog;
 } GameData;
 
 #endif
