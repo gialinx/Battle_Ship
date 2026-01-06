@@ -174,11 +174,11 @@ void placing_ships_render(SDL_Renderer* renderer, GameData* game) {
                      COLOR_BUTTON_DISABLED, 0, 0);
     }
 
-    // BACK button
+    // QUIT GAME button
     int back_x = MAP_X - 40, back_y = MAP_Y + MAP_SIZE * CELL_DISPLAY + 20;
     int back_hover = (mx >= back_x && mx <= back_x + 150 && my >= back_y && my <= back_y + 50);
-    render_button(renderer, game->font_small, "< Back to Lobby", back_x, back_y, 150, 50,
-                 (SDL_Color){200, 100, 0, 255}, back_hover, 1);
+    render_button(renderer, game->font_small, "Quit Game", back_x, back_y, 150, 50,
+                 (SDL_Color){200, 50, 50, 255}, back_hover, 1);
     
     // Message
     if(strlen(game->message) > 0) {
@@ -257,12 +257,17 @@ void placing_ships_handle_click(GameData* game, int x, int y) {
     // Click BACK button
     int back_x = MAP_X - 40, back_y = MAP_Y + MAP_SIZE * CELL_DISPLAY + 20;
     if(x >= back_x && x <= back_x + 150 && y >= back_y && y <= back_y + 50) {
-        // Reset game state and return to lobby
-        game->state = STATE_LOBBY;
-        for(int i=0; i<MAP_SIZE; i++)
-            for(int j=0; j<MAP_SIZE; j++)
-                game->own_map[i][j] = '-';
-        placing_ships_init(game);
+        // Show confirmation dialog instead of immediately leaving
+        game->confirmation_dialog.type = 1; // DIALOG_FORFEIT_PLACEMENT
+        game->confirmation_dialog.visible = 1;
+        strcpy(game->confirmation_dialog.title, "QUIT GAME?");
+        strcpy(game->confirmation_dialog.message, 
+               "Are you sure you want to quit?\n\n"
+               "Your opponent will be notified and\n"
+               "you will both return to lobby.");
+        strcpy(game->confirmation_dialog.button1_text, "STAY");
+        strcpy(game->confirmation_dialog.button2_text, "QUIT");
+        return;
     }
 }
 

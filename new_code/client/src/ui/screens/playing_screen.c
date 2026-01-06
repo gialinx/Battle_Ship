@@ -60,11 +60,40 @@ void playing_screen_render(SDL_Renderer* renderer, GameData* game) {
                    (SDL_Color){255, 255, 0, 255});
     }
 
-    // NO BACK BUTTON during gameplay - removed
+    // ==================== FORFEIT BUTTON ====================
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    
+    int forfeit_x = 30, forfeit_y = 620;
+    int forfeit_hover = (mx >= forfeit_x && mx <= forfeit_x + 150 && 
+                         my >= forfeit_y && my <= forfeit_y + 45);
+    
+    render_button(renderer, game->font_small, "Surrender", 
+                  forfeit_x, forfeit_y, 150, 45,
+                  (SDL_Color){180, 0, 0, 255},  // Dark red
+                  forfeit_hover, 1);
 }
 
 // ==================== HANDLE CLICK ====================
 void playing_screen_handle_click(GameData* game, int x, int y) {
+    // Check FORFEIT button first
+    int forfeit_x = 30, forfeit_y = 620;
+    if(x >= forfeit_x && x <= forfeit_x + 150 && 
+       y >= forfeit_y && y <= forfeit_y + 45) {
+        // Show confirmation dialog
+        game->confirmation_dialog.type = 2; // DIALOG_FORFEIT_GAME
+        game->confirmation_dialog.visible = 1;
+        strcpy(game->confirmation_dialog.title, "SURRENDER GAME?");
+        strcpy(game->confirmation_dialog.message,
+               "You will LOSE this match and\n"
+               "your ELO rating will decrease!\n\n"
+               "Your opponent will be notified to\n"
+               "approve your surrender request.");
+        strcpy(game->confirmation_dialog.button1_text, "NO");
+        strcpy(game->confirmation_dialog.button2_text, "YES");
+        return;
+    }
+    
     // Only handle firing during active gameplay
     if(!game->is_my_turn) return;
 

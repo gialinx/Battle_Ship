@@ -20,6 +20,11 @@
 #include "../ui/screens/placing_ships_screen.h"
 #include "../ui/screens/playing_screen.h"
 #include "../ui/screens/game_over_screen.h"
+#include "../ui/screens/match_history_screen.h"
+#include "../ui/screens/match_detail_screen.h"
+#include "../ui/screens/confirmation_dialog.h"
+#include "../ui/screens/opponent_quit_screen.h"
+#include "../ui/screens/surrender_request_screen.h"
 #include "../network/network.h"
 #include "../network/protocol.h"
 
@@ -142,6 +147,14 @@ void init_game() {
     game.matchmaking_active = 0;
     game.logout_requested = 0;
 
+    // Initialize confirmation dialog
+    game.confirmation_dialog.type = 0;  // DIALOG_NONE
+    game.confirmation_dialog.visible = 0;
+    game.confirmation_dialog.title[0] = '\0';
+    game.confirmation_dialog.message[0] = '\0';
+    game.confirmation_dialog.button1_text[0] = '\0';
+    game.confirmation_dialog.button2_text[0] = '\0';
+
     // Connect to server using configured IP
     printf("Connecting to server at %s:%d...\n", server_ip, PORT);
     game.sockfd = connect_to_server(server_ip, PORT);
@@ -203,6 +216,13 @@ void handle_events() {
         if(e.type == SDL_MOUSEBUTTONDOWN) {
             int x = e.button.x;
             int y = e.button.y;
+            
+            // Handle confirmation dialog first (highest priority)
+            if(game.confirmation_dialog.visible) {
+                confirmation_dialog_handle_click(&game, x, y);
+                pthread_mutex_unlock(&game_lock);
+                continue;
+            }
             
             if(game.state == STATE_LOGIN) {
                 login_screen_handle_click(&game, x, y);
@@ -284,6 +304,18 @@ void handle_events() {
             }
             else if(game.state == STATE_GAME_OVER) {
                 game_over_screen_handle_click(&game, x, y);
+            }
+            else if(game.state == STATE_MATCH_HISTORY) {
+                match_history_screen_handle_click(x, y, &game);
+            }
+            else if(game.state == STATE_MATCH_DETAIL) {
+                match_detail_screen_handle_click(x, y, &game);
+            }
+            else if(game.state == STATE_OPPONENT_QUIT_PLACEMENT) {
+                opponent_quit_screen_handle_click(&game, x, y);
+            }
+            else if(game.state == STATE_RECEIVED_SURRENDER_REQUEST) {
+                surrender_request_screen_handle_click(&game, x, y);
             }
         }
         
@@ -372,6 +404,26 @@ void render() {
     }
     else if(game.state == STATE_GAME_OVER) {
         game_over_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_MATCH_HISTORY) {
+        match_history_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_MATCH_DETAIL) {
+        match_detail_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_OPPONENT_QUIT_PLACEMENT) {
+        opponent_quit_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_WAITING_SURRENDER_APPROVAL) {
+        surrender_waiting_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_RECEIVED_SURRENDER_REQUEST) {
+        surrender_request_screen_render(game.renderer, &game);
+    }
+    
+    // Render confirmation dialog on top of everything if visible
+    if(game.confirmation_dialog.visible) {
+        confirmation_dialog_render(game.renderer, &game);
     }
     
     pthread_mutex_unlock(&game_lock);
