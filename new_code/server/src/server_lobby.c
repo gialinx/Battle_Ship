@@ -32,8 +32,14 @@ typedef struct {
     int in_game;
     int invited_by;  // user_id của người mời
     int opponent_id; // user_id của đối thủ
+    int last_opponent_id; // Lưu opponent_id sau khi game kết thúc (để rematch)
     int is_ready;    // đã sẵn sàng chơi chưa
+    int wants_rematch; // 1 if player clicked rematch button
     pthread_t thread;
+
+    // AFK detection
+    time_t last_activity_time;  // Last time client sent any message
+    int afk_warned;             // 1 if AFK warning has been sent
 
     // Game data
     char map[MAP_SIZE][MAP_SIZE];        // Bản đồ của mình
@@ -772,6 +778,10 @@ void handle_fire(Client* client, char* buffer) {
             snprintf(lose_msg, sizeof(lose_msg), "YOU LOSE:ELO %+d#", match.player2_elo_gain);
             send_to_client(opponent->fd, lose_msg);
 
+            // Save opponent_id before reset (for rematch)
+            client->last_opponent_id = client->opponent_id;
+            opponent->last_opponent_id = opponent->opponent_id;
+
             // Reset game state
             client->in_game = 0;
             opponent->in_game = 0;
@@ -1079,6 +1089,7 @@ void reset_game_state(Client* client) {
     client->opponent_id = -1;
     client->is_ready = 0;
     client->is_my_turn = 0;
+    client->wants_rematch = 0;
     client->ship_count = 0;
     client->total_shots = 0;
     client->total_hits = 0;
@@ -1192,6 +1203,10 @@ void handle_forfeit(Client* client) {
         printf("[FORFEIT] %s surrendered to %s (Match ID=%d, ELO change: %+d vs %+d)\n",
                client->username, opponent->username, match_id, loser_change, winner_change);
         
+        // Save opponent_id before reset (for rematch)
+        client->last_opponent_id = client->opponent_id;
+        opponent->last_opponent_id = opponent->opponent_id;
+        
         // Reset both players
         reset_game_state(client);
         reset_game_state(opponent);
@@ -1283,18 +1298,15 @@ void handle_surrender_accept(Client* client) {
     db_update_score(client->user_id, 100, 1);       // Win
     db_update_score(surrenderer->user_id, 0, 0);    // Loss
     
-    // For surrender: winner gets 0 ELO change, loser still loses ELO as penalty
-    int winner_change = 0;  // No ELO gain for winning via surrender
-    int loser_change = match.player2_elo_gain;  // Loser still loses ELO
-    
-    // Revert winner's ELO back to original (before the match calculation)
-    db_set_elo(client->user_id, match.player1_elo_before);
+    // For surrender: winner still gets ELO based on accuracy, loser loses ELO as penalty
+    int winner_change = match.player1_elo_gain;  // Winner ELO based on accuracy
+    int loser_change = match.player2_elo_gain;   // Loser loses ELO
     
     // Send results
     char win_msg[512];
     snprintf(win_msg, sizeof(win_msg),
             "GAME_OVER:WIN:Opponent surrendered:%d:%d#",
-            match.player1_elo_before, winner_change);
+            match.player1_elo_after, winner_change);
     send_to_client(client->fd, win_msg);
     
     char lose_msg[512];
@@ -1305,6 +1317,10 @@ void handle_surrender_accept(Client* client) {
     
     printf("[SURRENDER] %s surrendered to %s (Match ID=%d)\n",
            surrenderer->username, client->username, match_id);
+    
+    // Save opponent_id before reset (for rematch)
+    client->last_opponent_id = client->opponent_id;
+    surrenderer->last_opponent_id = surrenderer->opponent_id;
     
     reset_game_state(client);
     reset_game_state(surrenderer);
@@ -1330,6 +1346,147 @@ void handle_surrender_decline(Client* client) {
     pthread_mutex_unlock(&clients_lock);
 }
 
+// ==================== HANDLE REMATCH_REQUEST ====================
+void handle_rematch_request(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    // Mark that this client wants rematch
+    client->wants_rematch = 1;
+    
+    pthread_mutex_lock(&clients_lock);
+    // Use last_opponent_id since opponent_id is reset after game over
+    int opp_id = (client->opponent_id > 0) ? client->opponent_id : client->last_opponent_id;
+    Client* opponent = find_client_by_user_id(opp_id);
+    
+    if(!opponent) {
+        pthread_mutex_unlock(&clients_lock);
+        send_to_client(client->fd, "ERROR:Opponent not found#");
+        client->wants_rematch = 0;
+        return;
+    }
+    
+    // Check if opponent also wants rematch
+    if(opponent->wants_rematch) {
+        // Both want rematch! Start new game immediately
+        printf("[REMATCH] Both %s and %s want rematch, starting new game\n",
+               client->username, opponent->username);
+        
+        // Reset game state but keep opponent_id
+        int saved_opp_client = client->opponent_id;
+        int saved_opp_opponent = opponent->opponent_id;
+        
+        reset_game_state(client);
+        reset_game_state(opponent);
+        
+        // Restore opponent relationship
+        client->opponent_id = saved_opp_client;
+        opponent->opponent_id = saved_opp_opponent;
+        client->in_game = 1;
+        opponent->in_game = 1;
+        
+        // Send GAME_START to both
+        send_to_client(client->fd, "BOTH_WANT_REMATCH#");
+        send_to_client(opponent->fd, "BOTH_WANT_REMATCH#");
+        send_to_client(client->fd, "GAME_START#");
+        send_to_client(opponent->fd, "GAME_START#");
+    } else {
+        // Opponent hasn't requested rematch yet, send request
+        char msg[128];
+        snprintf(msg, sizeof(msg), "REMATCH_REQUEST_FROM:%s#", client->username);
+        send_to_client(opponent->fd, msg);
+        send_to_client(client->fd, "WAITING_REMATCH_RESPONSE#");
+        printf("[REMATCH] %s sent rematch request to %s\n", 
+               client->username, opponent->username);
+    }
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE REMATCH_ACCEPT ====================
+void handle_rematch_accept(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    // Use last_opponent_id since opponent_id is reset after game over
+    int opp_id = (client->opponent_id > 0) ? client->opponent_id : client->last_opponent_id;
+    Client* opponent = find_client_by_user_id(opp_id);
+    
+    if(!opponent) {
+        pthread_mutex_unlock(&clients_lock);
+        send_to_client(client->fd, "ERROR:Opponent not found#");
+        return;
+    }
+    
+    printf("[REMATCH] %s accepted rematch from %s\n", 
+           client->username, opponent->username);
+    
+    // Reset game state but keep opponent_id
+    int saved_opp_client = opp_id;
+    int saved_opp_opponent = (opponent->opponent_id > 0) ? opponent->opponent_id : opponent->last_opponent_id;
+    
+    reset_game_state(client);
+    reset_game_state(opponent);
+    
+    // Restore opponent relationship
+    client->opponent_id = saved_opp_client;
+    opponent->opponent_id = saved_opp_opponent;
+    client->in_game = 1;
+    opponent->in_game = 1;
+    
+    // Send GAME_START to both
+    send_to_client(client->fd, "GAME_START#");
+    send_to_client(opponent->fd, "GAME_START#");
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE REMATCH_DECLINE ====================
+void handle_rematch_decline(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    int opp_id = (client->opponent_id > 0) ? client->opponent_id : client->last_opponent_id;
+    Client* opponent = find_client_by_user_id(opp_id);
+    
+    if(opponent) {
+        send_to_client(opponent->fd, "REMATCH_DECLINED#");
+        printf("[REMATCH] %s declined rematch from %s\n", 
+               client->username, opponent->username);
+        opponent->wants_rematch = 0;
+    }
+    
+    // Reset both to lobby
+    reset_game_state(client);
+    if(opponent) {
+        reset_game_state(opponent);
+    }
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE CANCEL_REMATCH ====================
+void handle_cancel_rematch(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    client->wants_rematch = 0;
+    printf("[REMATCH] %s cancelled rematch request\n", client->username);
+    
+    // Client goes back to lobby
+    reset_game_state(client);
+}
+
 // ==================== CLIENT HANDLER ====================
 void* client_handler(void* arg) {
     Client* client = (Client*)arg;
@@ -1347,6 +1504,10 @@ void* client_handler(void* arg) {
         
         buffer[n] = '\0';
         printf("RECEIVED from fd=%d: %s\n", client->fd, buffer);
+        
+        // Update last activity time for AFK detection
+        client->last_activity_time = time(NULL);
+        client->afk_warned = 0;  // Reset warning flag on any activity
         
         // Split buffer by '#' to handle multiple commands in one packet
         char buffer_copy[BUFF_SIZE];
@@ -1428,8 +1589,29 @@ void* client_handler(void* arg) {
             else if(strcmp(cmd, "SURRENDER_DECLINE#") == 0) {
                 handle_surrender_decline(client);
             }
+            else if(strcmp(cmd, "REMATCH_REQUEST#") == 0) {
+                handle_rematch_request(client);
+            }
+            else if(strcmp(cmd, "REMATCH_ACCEPT#") == 0) {
+                handle_rematch_accept(client);
+            }
+            else if(strcmp(cmd, "REMATCH_DECLINE#") == 0) {
+                handle_rematch_decline(client);
+            }
+            else if(strcmp(cmd, "CANCEL_REMATCH#") == 0) {
+                handle_cancel_rematch(client);
+            }
             else if(strcmp(cmd, "LOGOUT#") == 0) {
                 handle_logout(client);
+            }
+            else if(strcmp(cmd, "PONG#") == 0) {
+                // Heartbeat response - already updated last_activity_time above
+                // No response needed
+            }
+            else if(strcmp(cmd, "AFK_RESPONSE#") == 0) {
+                // Player responded to AFK warning
+                client->afk_warned = 0;
+                printf("[AFK] %s responded to AFK warning\n", client->username);
             }
             else if(strlen(token) > 0) {  // Only report error if token is not empty
                 send_to_client(client->fd, "ERROR:Unknown command#");
@@ -1530,11 +1712,66 @@ void* matchmaking_thread(void *arg) {
     return NULL;
 }
 
+// ==================== AFK DETECTION THREAD ====================
+void* afk_detection_thread(void* arg) {
+    (void)arg;
+    
+    const int AFK_WARNING_TIMEOUT = 180;  // 3 minutes (180 seconds)
+    const int AFK_FORFEIT_TIMEOUT = 300;  // 5 minutes total (300 seconds)
+    
+    while(1) {
+        sleep(30);  // Check every 30 seconds
+        
+        time_t now = time(NULL);
+        
+        pthread_mutex_lock(&clients_lock);
+        for(int i = 0; i < MAX_CLIENTS; i++) {
+            Client* client = &clients[i];
+            
+            // Only check clients in active game
+            if(client->fd == -1 || !client->is_authenticated || !client->in_game) {
+                continue;
+            }
+            
+            if(client->last_activity_time == 0) {
+                client->last_activity_time = now;
+                continue;
+            }
+            
+            int idle_time = (int)(now - client->last_activity_time);
+            
+            // Check for forfeit timeout (5 minutes total)
+            if(idle_time >= AFK_FORFEIT_TIMEOUT && client->afk_warned) {
+                printf("[AFK] %s has been AFK for %d seconds - auto forfeiting\n", 
+                       client->username, idle_time);
+                
+                // Unlock before calling handle_forfeit to avoid deadlock
+                pthread_mutex_unlock(&clients_lock);
+                handle_forfeit(client);
+                pthread_mutex_lock(&clients_lock);
+                continue;
+            }
+            
+            // Check for warning timeout (3 minutes)
+            if(idle_time >= AFK_WARNING_TIMEOUT && !client->afk_warned) {
+                printf("[AFK] %s has been idle for %d seconds - sending warning\n", 
+                       client->username, idle_time);
+                
+                send_to_client(client->fd, "AFK_WARNING#");
+                client->afk_warned = 1;
+            }
+        }
+        pthread_mutex_unlock(&clients_lock);
+    }
+    
+    return NULL;
+}
+
 // ==================== MAIN ====================
 int main() {
     printf("========================================\n");
     printf("BATTLESHIP SERVER WITH MATCH HISTORY\n");
-    printf("Version: 2026-01-05 with db_save_match debug\n");
+    printf("Version: 2026-01-05 with AFK detection\n");
     printf("========================================\n");
     
     // Initialize database
@@ -1587,6 +1824,12 @@ int main() {
     pthread_create(&mm_thread, NULL, matchmaking_thread, NULL);
     pthread_detach(mm_thread);
     printf("[MATCHMAKING] Background thread started\n\n");
+    
+    // Start AFK detection thread
+    pthread_t afk_thread;
+    pthread_create(&afk_thread, NULL, afk_detection_thread, NULL);
+    pthread_detach(afk_thread);
+    printf("[AFK DETECTION] Background thread started\n\n");
     
     // Accept connections
     while(1) {

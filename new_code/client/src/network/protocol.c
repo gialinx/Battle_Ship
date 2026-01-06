@@ -303,12 +303,18 @@ int parse_server_message(GameData* game, const char* msg) {
         sscanf(msg, "INVITE_FROM:%d:%[^#]",
                &game->inviter_user_id, game->inviter_username);
         game->state = STATE_RECEIVED_INVITE;
+        // Save as last opponent for potential rematch
+        strcpy(game->last_opponent_name, game->inviter_username);
+        game->last_opponent_id = game->inviter_user_id;
         printf("✓ CLIENT: Received invite from user_id=%d, username=%s\n",
                game->inviter_user_id, game->inviter_username);
         return 1;
     }
     if(strncmp(msg, "INVITE_ACCEPTED", 15) == 0) {
         game->state = STATE_PLACING_SHIPS;
+        // Save invited user as last opponent for rematch
+        strcpy(game->last_opponent_name, game->invited_username);
+        game->last_opponent_id = game->invited_user_id;
         strcpy(game->game_message, "Opponent accepted! Please place your ships.");
         return 1;
     }
@@ -356,6 +362,7 @@ int parse_server_message(GameData* game, const char* msg) {
     if(strncmp(msg, "START_PLAYING", 13) == 0) {
         game->state = STATE_PLAYING;
         game->is_my_turn = 0;
+        game->game_start_time = SDL_GetTicks();  // Start timer
         game->elo_predicted = game->my_elo;  // Initialize prediction
         snprintf(game->message, sizeof(game->message), "Game started! Good luck!");
         return 1;
@@ -391,6 +398,10 @@ int parse_server_message(GameData* game, const char* msg) {
         int elo_change = 0;
         sscanf(msg + 14, "%[^:]:%d:%d", reason, &new_elo, &elo_change);
         
+        // Calculate game duration
+        unsigned int elapsed_ms = SDL_GetTicks() - game->game_start_time;
+        game->game_duration_seconds = elapsed_ms / 1000;
+        
         game->state = STATE_GAME_OVER;
         game->game_result_won = 1;
         game->elo_before = game->my_elo;
@@ -406,6 +417,10 @@ int parse_server_message(GameData* game, const char* msg) {
         // Parse: YOU WIN:ELO +25#
         int elo_change = 0;
         sscanf(msg, "YOU WIN:ELO %d", &elo_change);
+        
+        // Calculate game duration
+        unsigned int elapsed_ms = SDL_GetTicks() - game->game_start_time;
+        game->game_duration_seconds = elapsed_ms / 1000;
         
         game->state = STATE_GAME_OVER;
         game->game_result_won = 1;
@@ -427,6 +442,10 @@ int parse_server_message(GameData* game, const char* msg) {
         int elo_change = 0;
         sscanf(msg + 15, "%[^:]:%d:%d", reason, &new_elo, &elo_change);
         
+        // Calculate game duration
+        unsigned int elapsed_ms = SDL_GetTicks() - game->game_start_time;
+        game->game_duration_seconds = elapsed_ms / 1000;
+        
         game->state = STATE_GAME_OVER;
         game->game_result_won = 0;
         game->elo_before = game->my_elo;
@@ -442,6 +461,10 @@ int parse_server_message(GameData* game, const char* msg) {
         // Parse: YOU LOSE:ELO -25#
         int elo_change = 0;
         sscanf(msg, "YOU LOSE:ELO %d", &elo_change);
+        
+        // Calculate game duration
+        unsigned int elapsed_ms = SDL_GetTicks() - game->game_start_time;
+        game->game_duration_seconds = elapsed_ms / 1000;
         
         game->state = STATE_GAME_OVER;
         game->game_result_won = 0;
@@ -543,6 +566,33 @@ int parse_server_message(GameData* game, const char* msg) {
         return 1;
     }
     // SURRENDER_ACCEPTED will trigger GAME_OVER message from server
+
+    // Rematch messages
+    if(strncmp(msg, "REMATCH_REQUEST_FROM:", 21) == 0) {
+        // Format: REMATCH_REQUEST_FROM:username#
+        sscanf(msg + 21, "%[^#]", game->rematch_requester_name);
+        game->state = STATE_RECEIVED_REMATCH_REQUEST;
+        printf("CLIENT: Received rematch request from %s\n", game->rematch_requester_name);
+        return 1;
+    }
+    if(strncmp(msg, "REMATCH_DECLINED", 16) == 0) {
+        game->state = STATE_LOBBY;
+        strcpy(game->message, "Opponent declined your rematch request");
+        printf("CLIENT: Rematch request declined\n");
+        return 1;
+    }
+    if(strncmp(msg, "BOTH_WANT_REMATCH", 17) == 0) {
+        // Both players clicked rematch simultaneously, go directly to placing ships
+        printf("CLIENT: Both players want rematch, starting new game\n");
+        // Server will send GAME_START next
+        return 1;
+    }
+    if(strncmp(msg, "WAITING_REMATCH_RESPONSE", 24) == 0) {
+        // You requested rematch, opponent hasn't responded yet
+        game->state = STATE_WAITING_REMATCH_RESPONSE;
+        printf("CLIENT: Waiting for opponent's rematch response\n");
+        return 1;
+    }
 
     // Matchmaking
     if(strncmp(msg, "MM_JOINED", 9) == 0) {
@@ -758,6 +808,13 @@ int parse_server_message(GameData* game, const char* msg) {
         printf("CLIENT: Match detail loaded: match_id=%d, my_shots=%d, opponent_shots=%d\n", 
                match_id, game->current_match_detail.my_shot_count, 
                game->current_match_detail.opponent_shot_count);
+        return 1;
+    }
+    
+    // AFK warning
+    if(strcmp(msg, "AFK_WARNING#") == 0) {
+        game->afk_warning_visible = 1;
+        printf("CLIENT: AFK warning received\n");
         return 1;
     }
 

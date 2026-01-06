@@ -48,17 +48,17 @@ void match_history_screen_render(SDL_Renderer* renderer, GameData* game) {
     SDL_RenderDrawRect(renderer, &back_btn);
     render_text_centered(renderer, game->font_small, "< BACK", BACK_BTN_X + BACK_BTN_W/2, BACK_BTN_Y + 12, white);
     
-    // Column headers with fixed widths
+    // Column headers with wider spacing
     int y = HEADER_HEIGHT + 10;
-    render_text(renderer, game->font_small, "DATE", 20, y, gray);
-    render_text(renderer, game->font_small, "OPPONENT", 150, y, gray);
-    render_text(renderer, game->font_small, "RESULT", 320, y, gray);
-    render_text(renderer, game->font_small, "HIT", 420, y, gray);
-    render_text(renderer, game->font_small, "MISS", 480, y, gray);
-    render_text(renderer, game->font_small, "ACC%", 550, y, gray);
-    render_text(renderer, game->font_small, "ELO", 630, y, gray);
-    render_text(renderer, game->font_small, "TIME", 740, y, gray);
-    render_text(renderer, game->font_small, "VIEW", 850, y, gray);
+    render_text(renderer, game->font_small, "DATE & TIME", 20, y, gray);
+    render_text(renderer, game->font_small, "OPPONENT", 200, y, gray);
+    render_text(renderer, game->font_small, "RESULT", 370, y, gray);
+    render_text(renderer, game->font_small, "HIT", 470, y, gray);
+    render_text(renderer, game->font_small, "MISS", 540, y, gray);
+    render_text(renderer, game->font_small, "ACC%", 620, y, gray);
+    render_text(renderer, game->font_small, "ELO", 710, y, gray);
+    render_text(renderer, game->font_small, "TIME", 820, y, gray);
+    render_text(renderer, game->font_small, "VIEW", 900, y, gray);
     
     y += 30;
     
@@ -76,65 +76,66 @@ void match_history_screen_render(SDL_Renderer* renderer, GameData* game) {
         SDL_SetRenderDrawColor(renderer, 70, 80, 100, 255);
         SDL_RenderDrawRect(renderer, &entry);
         
-        // Date (compact format)
-        char date_compact[20];
+        // Date & Time (show full datetime)
+        char datetime_str[30];
         if(strlen(m->date) >= 16) {
-            snprintf(date_compact, sizeof(date_compact), "%c%c/%c%c %c%c:%c%c",
-                    m->date[5], m->date[6], m->date[8], m->date[9],
+            // Format: YYYY-MM-DD HH:MM -> DD/MM HH:MM
+            snprintf(datetime_str, sizeof(datetime_str), "%c%c/%c%c %c%c:%c%c",
+                    m->date[8], m->date[9], m->date[5], m->date[6],
                     m->date[11], m->date[12], m->date[14], m->date[15]);
         } else {
-            strcpy(date_compact, "--/-- --:--");
+            strcpy(datetime_str, "--/-- --:--");
         }
-        render_text(renderer, game->font_small, date_compact, 20, y + 25, white);
+        render_text(renderer, game->font_small, datetime_str, 20, y + 25, white);
         
         // Opponent
         char opponent_text[20];
         snprintf(opponent_text, sizeof(opponent_text), "%.12s", m->opponent_name);
-        render_text(renderer, game->font_small, opponent_text, 150, y + 15, cyan);
+        render_text(renderer, game->font_small, opponent_text, 200, y + 15, cyan);
         char opp_id[20];
         snprintf(opp_id, sizeof(opp_id), "ID:%d", m->opponent_id);
-        render_text(renderer, game->font_small, opp_id, 150, y + 35, gray);
+        render_text(renderer, game->font_small, opp_id, 200, y + 35, gray);
         
         // Result
         SDL_Color result_color = m->result ? green : red;
-        render_text(renderer, game->font_small, m->result ? "WIN" : "LOSS", 320, y + 25, result_color);
+        render_text(renderer, game->font_small, m->result ? "WIN" : "LOSS", 370, y + 25, result_color);
         
         // HIT
         char hit_text[10];
         snprintf(hit_text, sizeof(hit_text), "%d", m->my_hits);
-        render_text(renderer, game->font_small, hit_text, 425, y + 25, green);
+        render_text(renderer, game->font_small, hit_text, 475, y + 25, green);
         
         // MISS
         char miss_text[10];
         snprintf(miss_text, sizeof(miss_text), "%d", m->my_misses);
-        render_text(renderer, game->font_small, miss_text, 485, y + 25, red);
+        render_text(renderer, game->font_small, miss_text, 545, y + 25, red);
         
         // Accuracy %
         char acc_text[10];
         int total_shots = m->my_hits + m->my_misses;
         float accuracy = total_shots > 0 ? (float)m->my_hits * 100 / total_shots : 0;
         snprintf(acc_text, sizeof(acc_text), "%.0f%%", accuracy);
-        render_text(renderer, game->font_small, acc_text, 555, y + 25, white);
+        render_text(renderer, game->font_small, acc_text, 625, y + 25, white);
         
         // ELO change
         char elo_text[15];
         snprintf(elo_text, sizeof(elo_text), "%+d", m->elo_change);
         SDL_Color elo_color = m->elo_change > 0 ? green : red;
-        render_text(renderer, game->font_small, elo_text, 635, y + 15, elo_color);
+        render_text(renderer, game->font_small, elo_text, 715, y + 15, elo_color);
         
         char elo_detail[30];
         snprintf(elo_detail, sizeof(elo_detail), "%d->%d", m->my_elo_before, m->my_elo_after);
-        render_text(renderer, game->font_small, elo_detail, 635, y + 35, gray);
+        render_text(renderer, game->font_small, elo_detail, 715, y + 35, gray);
         
         // Duration
         int minutes = m->duration_seconds / 60;
         int seconds = m->duration_seconds % 60;
         char time_text[15];
         snprintf(time_text, sizeof(time_text), "%d:%02d", minutes, seconds);
-        render_text(renderer, game->font_small, time_text, 745, y + 25, white);
+        render_text(renderer, game->font_small, time_text, 825, y + 25, white);
         
         // View Details button
-        SDL_Rect details_btn = {840, y + 20, 100, 30};
+        SDL_Rect details_btn = {890, y + 20, 100, 30};
         int details_hover = (mx >= details_btn.x && mx <= details_btn.x + details_btn.w &&
                             my >= details_btn.y && my <= details_btn.y + details_btn.h);
         
@@ -164,7 +165,7 @@ void match_history_screen_handle_click(int mouse_x, int mouse_y, GameData* game)
     // View Details buttons
     int y = HEADER_HEIGHT + 40;
     for(int i = 0; i < game->match_history_count && i < 5; i++) {
-        SDL_Rect details_btn = {840, y + 20, 100, 30};
+        SDL_Rect details_btn = {890, y + 20, 100, 30};
         
         if(mouse_x >= details_btn.x && mouse_x <= details_btn.x + details_btn.w &&
            mouse_y >= details_btn.y && mouse_y <= details_btn.y + details_btn.h) {

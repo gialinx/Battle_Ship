@@ -25,6 +25,8 @@
 #include "../ui/screens/confirmation_dialog.h"
 #include "../ui/screens/opponent_quit_screen.h"
 #include "../ui/screens/surrender_request_screen.h"
+#include "../ui/screens/rematch_request_screen.h"
+#include "../ui/screens/afk_warning_screen.h"
 #include "../network/network.h"
 #include "../network/protocol.h"
 
@@ -317,6 +319,17 @@ void handle_events() {
             else if(game.state == STATE_RECEIVED_SURRENDER_REQUEST) {
                 surrender_request_screen_handle_click(&game, x, y);
             }
+            else if(game.state == STATE_WAITING_REMATCH_RESPONSE) {
+                rematch_waiting_screen_handle_click(&game, x, y);
+            }
+            else if(game.state == STATE_RECEIVED_REMATCH_REQUEST) {
+                rematch_request_screen_handle_click(&game, x, y);
+            }
+            
+            // AFK warning can appear in any state during active game
+            if(game.afk_warning_visible) {
+                afk_warning_screen_handle_event(&e, &game);
+            }
         }
         
         if(e.type == SDL_TEXTINPUT) {
@@ -420,10 +433,21 @@ void render() {
     else if(game.state == STATE_RECEIVED_SURRENDER_REQUEST) {
         surrender_request_screen_render(game.renderer, &game);
     }
+    else if(game.state == STATE_WAITING_REMATCH_RESPONSE) {
+        rematch_waiting_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_RECEIVED_REMATCH_REQUEST) {
+        rematch_request_screen_render(game.renderer, &game);
+    }
     
     // Render confirmation dialog on top of everything if visible
     if(game.confirmation_dialog.visible) {
         confirmation_dialog_render(game.renderer, &game);
+    }
+    
+    // Render AFK warning on top of everything if visible
+    if(game.afk_warning_visible) {
+        afk_warning_screen_render(game.renderer, &game);
     }
     
     pthread_mutex_unlock(&game_lock);

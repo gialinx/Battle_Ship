@@ -105,25 +105,45 @@ void game_over_screen_render(SDL_Renderer* renderer, GameData* game) {
     render_text_centered(renderer, game->font_small, text, center_x, stats_y, total_color);
     stats_y += 50;
     
+    // Match Duration
+    int duration_minutes = game->game_duration_seconds / 60;
+    int duration_seconds = game->game_duration_seconds % 60;
+    snprintf(text, sizeof(text), "Match Duration: %d:%02d", duration_minutes, duration_seconds);
+    render_text_centered(renderer, game->font_small, text, center_x, stats_y, white);
+    stats_y += 50;
+    
     // New ELO (large and prominent)
     int new_elo = game->elo_before + total_change;
     snprintf(text, sizeof(text), "NEW ELO: %d", new_elo);
     render_text_centered(renderer, game->font, text, center_x, stats_y, gold);
     
-    // ==================== BACK TO LOBBY BUTTON ====================
-    int btn_x = center_x - 150;
+    // ==================== BUTTONS ====================
+    // Two buttons side by side: Back to Lobby (left) and Rematch? (right)
+    int btn_width = 220;
+    int btn_height = 60;
+    int btn_spacing = 20;
+    int total_width = btn_width * 2 + btn_spacing;
+    int btn_start_x = center_x - total_width / 2;
     int btn_y = SCREEN_HEIGHT - 120;
-    int btn_w = 300;
-    int btn_h = 60;
     
     int mx, my;
     SDL_GetMouseState(&mx, &my);
-    int hover = (mx >= btn_x && mx <= btn_x + btn_w &&
-                 my >= btn_y && my <= btn_y + btn_h);
     
-    SDL_Color btn_color = {0, 150, 255, 255};
+    // Back to Lobby button (left)
+    int lobby_btn_x = btn_start_x;
+    int lobby_hover = (mx >= lobby_btn_x && mx <= lobby_btn_x + btn_width &&
+                       my >= btn_y && my <= btn_y + btn_height);
+    SDL_Color lobby_btn_color = {100, 100, 100, 255};  // Gray
     render_button(renderer, game->font_small, "BACK TO LOBBY", 
-                 btn_x, btn_y, btn_w, btn_h, btn_color, hover, 1);
+                 lobby_btn_x, btn_y, btn_width, btn_height, lobby_btn_color, lobby_hover, 1);
+    
+    // Rematch? button (right)
+    int rematch_btn_x = btn_start_x + btn_width + btn_spacing;
+    int rematch_hover = (mx >= rematch_btn_x && mx <= rematch_btn_x + btn_width &&
+                         my >= btn_y && my <= btn_y + btn_height);
+    SDL_Color rematch_btn_color = {0, 180, 80, 255};  // Green
+    render_button(renderer, game->font_small, "REMATCH?", 
+                 rematch_btn_x, btn_y, btn_width, btn_height, rematch_btn_color, rematch_hover, 1);
     
     // Footer message
     const char* footer = game->game_result_won ? 
@@ -135,14 +155,19 @@ void game_over_screen_render(SDL_Renderer* renderer, GameData* game) {
 // ==================== HANDLE CLICK ====================
 void game_over_screen_handle_click(GameData* game, int x, int y) {
     int center_x = SCREEN_WIDTH / 2;
-    int btn_x = center_x - 150;
+    int btn_width = 220;
+    int btn_height = 60;
+    int btn_spacing = 20;
+    int total_width = btn_width * 2 + btn_spacing;
+    int btn_start_x = center_x - total_width / 2;
     int btn_y = SCREEN_HEIGHT - 120;
-    int btn_w = 300;
-    int btn_h = 60;
+    
+    int lobby_btn_x = btn_start_x;
+    int rematch_btn_x = btn_start_x + btn_width + btn_spacing;
     
     // Back to Lobby button
-    if(x >= btn_x && x <= btn_x + btn_w &&
-       y >= btn_y && y <= btn_y + btn_h) {
+    if(x >= lobby_btn_x && x <= lobby_btn_x + btn_width &&
+       y >= btn_y && y <= btn_y + btn_height) {
         // Reset game state and return to lobby
         game->state = STATE_LOBBY;
         game->game_active = 0;
@@ -156,5 +181,20 @@ void game_over_screen_handle_click(GameData* game, int x, int y) {
         }
         
         // Stats and user list will be automatically refreshed by main loop
+        return;
     }
+    
+    // Rematch? button
+    if(x >= rematch_btn_x && x <= rematch_btn_x + btn_width &&
+       y >= btn_y && y <= btn_y + btn_height) {
+        // Send REMATCH_REQUEST to server
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "REMATCH_REQUEST#");
+        send(game->sockfd, buffer, strlen(buffer), 0);
+        printf("CLIENT: Sent REMATCH_REQUEST\n");
+        
+        // Will wait for server response
+        // - If opponent also wants rematch -> BOTH_WANT_REMATCH -> GAME_START
+        // - If opponent hasn't clicked yet -> REMATCH_REQUEST_FROM:opponent_name
+        return;    }
 }

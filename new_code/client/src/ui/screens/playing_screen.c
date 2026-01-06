@@ -19,21 +19,17 @@ void playing_screen_render(SDL_Renderer* renderer, GameData* game) {
     // Title
     render_text(renderer, game->font, "BATTLESHIP - IN BATTLE", 320, 10, COLOR_TEXT);
 
-    // ==================== ELO BAR ====================
-    // Display current ELO with prediction
-    char elo_text[128];
-    int display_elo = game->elo_predicted > 0 ? game->elo_predicted : game->my_elo;
-    snprintf(elo_text, sizeof(elo_text), "ELO: %d", display_elo);
-    render_text(renderer, game->font_small, elo_text, 850, 15, 
-                (SDL_Color){255, 215, 0, 255});  // Gold color
+    // ==================== GAME TIMER ====================
+    // Display elapsed time since game start
+    unsigned int elapsed_ms = SDL_GetTicks() - game->game_start_time;
+    int elapsed_seconds = elapsed_ms / 1000;
+    int minutes = elapsed_seconds / 60;
+    int seconds = elapsed_seconds % 60;
     
-    // Show predicted change if different from base
-    if(game->elo_predicted > game->my_elo) {
-        char pred_text[64];
-        snprintf(pred_text, sizeof(pred_text), "(+%d)", game->elo_predicted - game->my_elo);
-        render_text(renderer, game->font_small, pred_text, 920, 15,
-                   (SDL_Color){0, 255, 100, 255});  // Green
-    }
+    char timer_text[32];
+    snprintf(timer_text, sizeof(timer_text), "TIME: %d:%02d", minutes, seconds);
+    render_text(renderer, game->font_small, timer_text, 850, 15, 
+                (SDL_Color){255, 215, 0, 255});  // Gold color
 
     // Turn indicator
     if(game->is_my_turn) {

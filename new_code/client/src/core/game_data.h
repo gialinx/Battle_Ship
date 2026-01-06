@@ -27,6 +27,8 @@ typedef enum {
     STATE_RECEIVED_SURRENDER_REQUEST, // Nhận surrender request từ đối thủ
     STATE_OPPONENT_QUIT_PLACEMENT,    // Đối thủ quit trong placement
     STATE_GAME_OVER,       // Kết thúc
+    STATE_WAITING_REMATCH_RESPONSE,   // Chờ đối thủ phản hồi rematch request
+    STATE_RECEIVED_REMATCH_REQUEST,   // Nhận được rematch request
     STATE_MATCH_HISTORY,   // Xem lịch sử các trận
     STATE_MATCH_DETAIL     // Xem chi tiết một trận
 } GameState;
@@ -180,6 +182,11 @@ typedef struct {
     char surrender_requester_name[50];
     char opponent_quit_name[50];
     
+    // Rematch system
+    char last_opponent_name[50];      // Tên đối thủ vừa chơi (để rematch)
+    int last_opponent_id;              // ID đối thủ vừa chơi
+    char rematch_requester_name[50];   // Người gửi rematch request
+    
     // Maps
     char own_map[MAP_SIZE][MAP_SIZE];
     char enemy_map[MAP_SIZE][MAP_SIZE];
@@ -198,10 +205,15 @@ typedef struct {
     
     // Logout flag
     int logout_requested;
+    
+    // AFK detection
+    int afk_warning_visible;  // 1 if AFK warning dialog is shown
 
     // Gameplay
     int is_my_turn;
     int game_active;
+    unsigned int game_start_time;  // SDL_GetTicks() when game starts
+    int game_duration_seconds;     // Total game duration for game over screen
     char message[256];
     char game_message[256];
     
