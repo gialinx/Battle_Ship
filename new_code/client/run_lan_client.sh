@@ -62,5 +62,5 @@ echo "🚀 Starting client..."
 echo "========================================="
 echo ""
 
-export SERVER_IP=$SERVER_IP
-./client_gui
+# Pass server IP as command line argument (more reliable than env var)
+./client_gui $SERVER_IP

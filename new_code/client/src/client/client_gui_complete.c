@@ -41,10 +41,12 @@ const char* server_ip = NULL;
 
 // ==================== INITIALIZE GAME ====================
 void init_game() {
-    // Get server IP from environment variable or use default
-    server_ip = getenv("SERVER_IP");
+    // Get server IP from environment variable or command-line (command-line takes priority)
     if(!server_ip || strlen(server_ip) == 0) {
-        server_ip = "127.0.0.1"; // Default to localhost
+        server_ip = getenv("SERVER_IP");
+        if(!server_ip || strlen(server_ip) == 0) {
+            server_ip = "127.0.0.1"; // Default to localhost
+        }
     }
     printf("CLIENT: Will connect to server at %s:5501\n", server_ip);
     
@@ -473,9 +475,9 @@ int main(int argc, char* argv[]) {
     // Parse command-line arguments for server IP
     if(argc >= 2) {
         server_ip = argv[1];
-        printf("Server IP from command-line: %s\n", server_ip);
+        printf("DEBUG: Server IP from command-line: %s\n", server_ip);
     } else {
-        printf("Using default server IP: %s\n", server_ip);
+        printf("DEBUG: No server IP provided via command-line\n");
         printf("Usage: %s [server_ip]\n", argv[0]);
         printf("Example: %s 192.168.1.100\n", argv[0]);
     }
