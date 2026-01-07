@@ -236,9 +236,11 @@ void placing_ships_handle_click(GameData* game, int x, int y) {
                 game->own_map[ty][tx] = '0' + length; // '2', '3', or '4'
             }
             
-            game->ships_placed_count[length]++;
-            snprintf(game->message, sizeof(game->message), "Da dat tau %d o! (%d/%d)", 
-                     length, game->ships_placed_count[length], (length == 2 ? 2 : 1));
+            // Save last placed ship info for PLACE_OK confirmation
+            game->last_placed_ship_length = length;
+            
+            // Counter will be incremented when PLACE_OK is received
+            snprintf(game->message, sizeof(game->message), "Placing ship...");
             
             game->selected_ship_length = 0;
             game->selected_ship_id = -1;

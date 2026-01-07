@@ -2,12 +2,23 @@
 #include "profile_screen.h"
 #include "../../ui/renderer.h"
 #include "../../ui/colors.h"
+#include "../../network/network.h"
 #include <string.h>
+
+// Flag to track if stats were requested for current profile session
+static int stats_requested_this_session = 0;
 
 void profile_screen_render(SDL_Renderer* renderer, GameData* game) {
     // Background
     SDL_SetRenderDrawColor(renderer, 20, 30, 50, 255);
     SDL_RenderClear(renderer);
+    
+    // Request fresh stats only ONCE when entering profile screen
+    if(!stats_requested_this_session) {
+        send_to_server(game->sockfd, "GET_MY_STATS#");
+        stats_requested_this_session = 1;
+        printf("CLIENT: Requesting fresh stats for profile screen\n");
+    }
 
     SDL_Color white = {255, 255, 255, 255};
     SDL_Color cyan = {0, 200, 255, 255};
@@ -52,19 +63,18 @@ void profile_screen_render(SDL_Renderer* renderer, GameData* game) {
     render_button(renderer, game->font_small, "Logout", 480, 550, 180, 50,
                  (SDL_Color){200, 50, 50, 255}, logout_hover, 1);
 
-    // TODO message
-    render_text(renderer, game->font_small, "(Full profile coming soon...)", 330, 480,
-               (SDL_Color){150, 150, 150, 255});
 }
 
 void profile_screen_handle_click(GameData* game, int x, int y) {
     // Back to Lobby button
     if(x >= 280 && x <= 460 && y >= 550 && y <= 600) {
+        stats_requested_this_session = 0;  // Reset flag for next time
         game->state = STATE_LOBBY;
     }
 
     // Logout button
     if(x >= 480 && x <= 660 && y >= 550 && y <= 600) {
+        stats_requested_this_session = 0;  // Reset flag
         game->logout_requested = 1;
     }
 }

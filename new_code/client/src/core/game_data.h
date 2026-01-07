@@ -27,6 +27,8 @@ typedef enum {
     STATE_RECEIVED_SURRENDER_REQUEST, // Nhận surrender request từ đối thủ
     STATE_OPPONENT_QUIT_PLACEMENT,    // Đối thủ quit trong placement
     STATE_GAME_OVER,       // Kết thúc
+    STATE_WAITING_REMATCH_RESPONSE,   // Chờ đối thủ phản hồi rematch request
+    STATE_RECEIVED_REMATCH_REQUEST,   // Nhận được rematch request
     STATE_MATCH_HISTORY,   // Xem lịch sử các trận
     STATE_MATCH_DETAIL     // Xem chi tiết một trận
 } GameState;
@@ -88,6 +90,7 @@ typedef struct {
     int hit;           // 1 = hit, 0 = miss
     int ship_length;   // Length of ship hit (0 if miss)
     int ship_sunk;     // 1 if ship was sunk with this shot
+    int is_my_shot;    // 1 = my shot, 0 = opponent shot
 } ShotEntry;
 
 // ==================== MATCH DETAIL ====================
@@ -95,10 +98,14 @@ typedef struct {
     int match_id;
     char my_name[50];
     char opponent_name[50];
-    ShotEntry my_shots[100];
-    int my_shot_count;
-    ShotEntry opponent_shots[100];
-    int opponent_shot_count;
+    char my_ships[MAP_SIZE * MAP_SIZE + 1];       // Ship placement map
+    char opponent_ships[MAP_SIZE * MAP_SIZE + 1]; // Opponent ship placement
+    ShotEntry all_shots[200];  // All shots in chronological order
+    int shot_count;
+    ShotEntry my_shots[100];         // Deprecated: kept for backward compatibility
+    int my_shot_count;               // Deprecated
+    ShotEntry opponent_shots[100];   // Deprecated
+    int opponent_shot_count;         // Deprecated
     int winner;  // 1 = me, 0 = opponent
     char date[50];
 } MatchDetail;
@@ -180,6 +187,11 @@ typedef struct {
     char surrender_requester_name[50];
     char opponent_quit_name[50];
     
+    // Rematch system
+    char last_opponent_name[50];      // Tên đối thủ vừa chơi (để rematch)
+    int last_opponent_id;              // ID đối thủ vừa chơi
+    char rematch_requester_name[50];   // Người gửi rematch request
+    
     // Maps
     char own_map[MAP_SIZE][MAP_SIZE];
     char enemy_map[MAP_SIZE][MAP_SIZE];
@@ -188,6 +200,7 @@ typedef struct {
     int selected_ship_length;
     int selected_ship_id;
     int ship_horizontal;
+    int last_placed_ship_length;  // Track last ship placed for PLACE_OK confirmation
     int ships_to_place[4];             // {4, 3, 2, 2}
     int ships_placed_count[5];         // Index by ship length [0,1,2,3,4]
     int ships_placed_countMax[5];      // Max count for each ship length
@@ -198,10 +211,15 @@ typedef struct {
     
     // Logout flag
     int logout_requested;
+    
+    // AFK detection
+    int afk_warning_visible;  // 1 if AFK warning dialog is shown
 
     // Gameplay
     int is_my_turn;
     int game_active;
+    unsigned int game_start_time;  // SDL_GetTicks() when game starts
+    int game_duration_seconds;     // Total game duration for game over screen
     char message[256];
     char game_message[256];
     

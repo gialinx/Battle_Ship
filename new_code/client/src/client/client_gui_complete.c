@@ -25,6 +25,8 @@
 #include "../ui/screens/confirmation_dialog.h"
 #include "../ui/screens/opponent_quit_screen.h"
 #include "../ui/screens/surrender_request_screen.h"
+#include "../ui/screens/rematch_request_screen.h"
+#include "../ui/screens/afk_warning_screen.h"
 #include "../network/network.h"
 #include "../network/protocol.h"
 
@@ -34,11 +36,20 @@
 GameData game;
 pthread_mutex_t game_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// Global variable for server IP
-const char* server_ip = "127.0.0.1"; // Default to localhost
+// Global variable for server IP - can be set via environment variable
+const char* server_ip = NULL;
 
 // ==================== INITIALIZE GAME ====================
 void init_game() {
+    // Get server IP from environment variable or command-line (command-line takes priority)
+    if(!server_ip || strlen(server_ip) == 0) {
+        server_ip = getenv("SERVER_IP");
+        if(!server_ip || strlen(server_ip) == 0) {
+            server_ip = "127.0.0.1"; // Default to localhost
+        }
+    }
+    printf("CLIENT: Will connect to server at %s:5501\n", server_ip);
+    
     fprintf(stderr, "DEBUG: Starting SDL_Init...\n");
     if(SDL_Init(SDL_INIT_VIDEO) < 0) {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
@@ -317,6 +328,24 @@ void handle_events() {
             else if(game.state == STATE_RECEIVED_SURRENDER_REQUEST) {
                 surrender_request_screen_handle_click(&game, x, y);
             }
+            else if(game.state == STATE_WAITING_REMATCH_RESPONSE) {
+                rematch_waiting_screen_handle_click(&game, x, y);
+            }
+            else if(game.state == STATE_RECEIVED_REMATCH_REQUEST) {
+                rematch_request_screen_handle_click(&game, x, y);
+            }
+            
+            // AFK warning can appear in any state during active game
+            if(game.afk_warning_visible) {
+                afk_warning_screen_handle_event(&e, &game);
+            }
+        }
+        
+        // Mouse wheel for scrolling in match detail
+        if(e.type == SDL_MOUSEWHEEL) {
+            if(game.state == STATE_MATCH_DETAIL) {
+                match_detail_screen_handle_wheel(e.wheel.y);
+            }
         }
         
         if(e.type == SDL_TEXTINPUT) {
@@ -420,10 +449,21 @@ void render() {
     else if(game.state == STATE_RECEIVED_SURRENDER_REQUEST) {
         surrender_request_screen_render(game.renderer, &game);
     }
+    else if(game.state == STATE_WAITING_REMATCH_RESPONSE) {
+        rematch_waiting_screen_render(game.renderer, &game);
+    }
+    else if(game.state == STATE_RECEIVED_REMATCH_REQUEST) {
+        rematch_request_screen_render(game.renderer, &game);
+    }
     
     // Render confirmation dialog on top of everything if visible
     if(game.confirmation_dialog.visible) {
         confirmation_dialog_render(game.renderer, &game);
+    }
+    
+    // Render AFK warning on top of everything if visible
+    if(game.afk_warning_visible) {
+        afk_warning_screen_render(game.renderer, &game);
     }
     
     pthread_mutex_unlock(&game_lock);
@@ -435,9 +475,9 @@ int main(int argc, char* argv[]) {
     // Parse command-line arguments for server IP
     if(argc >= 2) {
         server_ip = argv[1];
-        printf("Server IP from command-line: %s\n", server_ip);
+        printf("DEBUG: Server IP from command-line: %s\n", server_ip);
     } else {
-        printf("Using default server IP: %s\n", server_ip);
+        printf("DEBUG: No server IP provided via command-line\n");
         printf("Usage: %s [server_ip]\n", argv[0]);
         printf("Example: %s 192.168.1.100\n", argv[0]);
     }

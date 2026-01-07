@@ -6,5 +6,6 @@
 
 void match_detail_screen_render(SDL_Renderer* renderer, GameData* game);
 void match_detail_screen_handle_click(int mouse_x, int mouse_y, GameData* game);
+void match_detail_screen_handle_wheel(int wheel_y);
 
 #endif

@@ -32,8 +32,14 @@ typedef struct {
     int in_game;
     int invited_by;  // user_id của người mời
     int opponent_id; // user_id của đối thủ
+    int last_opponent_id; // Lưu opponent_id sau khi game kết thúc (để rematch)
     int is_ready;    // đã sẵn sàng chơi chưa
+    int wants_rematch; // 1 if player clicked rematch button
     pthread_t thread;
+
+    // AFK detection
+    time_t last_activity_time;  // Last time client sent any message
+    int afk_warned;             // 1 if AFK warning has been sent
 
     // Game data
     char map[MAP_SIZE][MAP_SIZE];        // Bản đồ của mình
@@ -48,7 +54,8 @@ typedef struct {
     time_t game_start_time;              // Thời điểm bắt đầu game
     
     // Shot history tracking (for match replay)
-    char shot_log[4096];                 // Log của từng shot: "x,y,hit,ship_len,sunk;"
+    char shot_log[4096];                 // Log của từng shot: "x,y,hit,ship_len,sunk;" (deprecated)
+    char* match_log;                     // Shared log cho cả trận: "player_id:x,y,hit,ship_len,sunk;"
 } Client;
 
 Client clients[MAX_CLIENTS];
@@ -222,12 +229,12 @@ void handle_get_my_stats(Client* client) {
     if(db_get_user_profile(client->user_id, &profile) == 0) {
         char response[BUFF_SIZE];
         snprintf(response, sizeof(response),
-                "MY_STATS:%s:%d:%d:%d:%d#",
+                "MY_STATS:%s:%d:%d:%d:%d:%d#",
                 profile.username, profile.total_games,
-                profile.wins, profile.elo_rating, client->user_id);
+                profile.wins, profile.losses, profile.elo_rating, client->user_id);
         send_to_client(client->fd, response);
-        printf("Sent stats to %s: ELO=%d, Games=%d, Wins=%d\n",
-               profile.username, profile.elo_rating, profile.total_games, profile.wins);
+        printf("Sent stats to %s: ELO=%d, Games=%d, Wins=%d, Losses=%d\n",
+               profile.username, profile.elo_rating, profile.total_games, profile.wins, profile.losses);
     } else {
         send_to_client(client->fd, "ERROR:Failed to get stats#");
     }
@@ -555,6 +562,11 @@ void handle_ready(Client* client) {
         time_t now = time(NULL);
         client->game_start_time = now;
         opponent->game_start_time = now;
+        
+        // Allocate shared match log for both players
+        char* match_log = (char*)calloc(8192, sizeof(char));
+        client->match_log = match_log;
+        opponent->match_log = match_log;
 
         // Send initial state to both
         send_state(client);
@@ -639,10 +651,12 @@ void handle_fire(Client* client, char* buffer) {
         send_to_client(client->fd, res);
         printf("DEBUG: %s MISS at (%d,%d)\n", client->username, x+1, y+1);
         
-        // Log shot: x,y,hit(0=miss),ship_len(0),sunk(0)
-        char shot_entry[50];
-        snprintf(shot_entry, sizeof(shot_entry), "%d,%d,0,0,0;", x, y);
-        strcat(client->shot_log, shot_entry);
+        // Log shot: player_id:x,y,hit(0),ship_len(0),sunk(0)
+        char shot_entry[64];
+        snprintf(shot_entry, sizeof(shot_entry), "%d:%d,%d,0,0,0;", client->user_id, x, y);
+        if(client->match_log) {
+            strcat(client->match_log, shot_entry);
+        }
 
         // Switch turn
         client->is_my_turn = 0;
@@ -683,11 +697,13 @@ void handle_fire(Client* client, char* buffer) {
             }
         }
         
-        // Log shot: x,y,hit(1),ship_len,sunk
-        char shot_entry[50];
-        snprintf(shot_entry, sizeof(shot_entry), "%d,%d,1,%d,%d;", 
-                x, y, hit_ship_len, ship_sunk);
-        strcat(client->shot_log, shot_entry);
+        // Log shot: player_id:x,y,hit(1),ship_len,sunk
+        char shot_entry[64];
+        snprintf(shot_entry, sizeof(shot_entry), "%d:%d,%d,1,%d,%d;", 
+                client->user_id, x, y, hit_ship_len, ship_sunk);
+        if(client->match_log) {
+            strcat(client->match_log, shot_entry);
+        }
 
         char res[64];
         snprintf(res, sizeof(res), "RESULT:HIT,%d,%d#", x+1, y+1);
@@ -734,11 +750,33 @@ void handle_fire(Client* client, char* buffer) {
             match.player2_accuracy = opponent_accuracy;
             match.game_duration_seconds = game_duration;
             
-            // Build match_data with interleaved shots
-            // Format: p1_shot1;p2_shot1;p1_shot2;p2_shot2;...
-            // But we have sequential logs, so store as: P1_SHOTS|P2_SHOTS
-            snprintf(match.match_data, sizeof(match.match_data), "%s|%s", 
-                    client->shot_log, opponent->shot_log);
+            // Serialize ship maps (format: row1,row2,row3,...)
+            char p1_ships[256] = {0};
+            char p2_ships[256] = {0};
+            int offset = 0;
+            for(int r = 0; r < MAP_SIZE && offset < 255; r++) {
+                for(int c = 0; c < MAP_SIZE && offset < 254; c++) {
+                    p1_ships[offset++] = client->map[r][c];
+                }
+            }
+            p1_ships[offset] = '\0';
+            
+            offset = 0;
+            for(int r = 0; r < MAP_SIZE && offset < 255; r++) {
+                for(int c = 0; c < MAP_SIZE && offset < 254; c++) {
+                    p2_ships[offset++] = opponent->map[r][c];
+                }
+            }
+            p2_ships[offset] = '\0';
+            
+            strncpy(match.player1_ships, p1_ships, sizeof(match.player1_ships) - 1);
+            strncpy(match.player2_ships, p2_ships, sizeof(match.player2_ships) - 1);
+            
+            // Save match_data: sequential shots with player_id
+            // Format: player_id:x,y,hit,ship_len,sunk;player_id:x,y,hit,ship_len,sunk;...
+            if(client->match_log) {
+                strncpy(match.match_data, client->match_log, sizeof(match.match_data) - 1);
+            }
             
             printf("SERVER: Match data saved (%zu bytes)\n", strlen(match.match_data));
             
@@ -771,6 +809,17 @@ void handle_fire(Client* client, char* buffer) {
             char lose_msg[256];
             snprintf(lose_msg, sizeof(lose_msg), "YOU LOSE:ELO %+d#", match.player2_elo_gain);
             send_to_client(opponent->fd, lose_msg);
+
+            // Save opponent_id before reset (for rematch)
+            client->last_opponent_id = client->opponent_id;
+            opponent->last_opponent_id = opponent->opponent_id;
+
+            // Free shared match log
+            if(client->match_log) {
+                free(client->match_log);
+                client->match_log = NULL;
+                opponent->match_log = NULL;
+            }
 
             // Reset game state
             client->in_game = 0;
@@ -886,11 +935,41 @@ void handle_get_match_detail(Client* client, const char* cmd) {
     // Parse match_data (format: "x,y,hit,ship_len,sunk;x,y,hit,ship_len,sunk;...")
     // match_data should contain alternating shots: p1_shot1;p2_shot1;p1_shot2;p2_shot2;...
     
-    // Build response: MATCH_DETAIL:match_id:my_shots_data|opponent_shots_data#
-    // shots_data format: x,y,hit,ship_len,sunk;x,y,hit,ship_len,sunk;...
+    // Determine if this client is player1 or player2
+    int is_player1 = (match.player1_id == client->user_id);
+    int winner = (match.winner_id == client->user_id) ? 1 : 0;
     
-    char response[BUFF_SIZE * 2];
-    snprintf(response, sizeof(response), "MATCH_DETAIL:%d:%s#", match_id, match.match_data);
+    // Get opponent username
+    int opponent_id = is_player1 ? match.player2_id : match.player1_id;
+    char opponent_name[50] = "Unknown";
+    UserProfile opp_profile;
+    if(db_get_user_profile(opponent_id, &opp_profile) == 0) {
+        strcpy(opponent_name, opp_profile.username);
+    }
+    
+    // Build response: MATCH_DETAIL:match_id:winner:my_name:opponent_name:my_ships:opponent_ships:match_data#
+    // my_ships and opponent_ships are the ship placement maps
+    const char* my_ships = is_player1 ? match.player1_ships : match.player2_ships;
+    const char* opp_ships = is_player1 ? match.player2_ships : match.player1_ships;
+    
+    // Handle NULL ship data (old matches before migration)
+    if(!my_ships || strlen(my_ships) == 0) my_ships = "";
+    if(!opp_ships || strlen(opp_ships) == 0) opp_ships = "";
+    
+    // Send match_data directly - it's already in sequential format with player_id
+    // Format: player_id:x,y,hit,ship_len,sunk;player_id:x,y,hit,ship_len,sunk;...
+    const char* match_data_to_send = match.match_data ? match.match_data : "";
+    
+    printf("SERVER: Sending MATCH_DETAIL for match #%d\n", match_id);
+    printf("SERVER: match_data length=%zu, first 100 chars: %.100s\n", 
+           strlen(match_data_to_send), match_data_to_send);
+    
+    char response[8192];
+    snprintf(response, sizeof(response), "MATCH_DETAIL:%d:%d:%s:%s:%s:%s:%s#", 
+             match_id, winner, client->username, opponent_name, 
+             my_ships, opp_ships, match_data_to_send);
+    
+    printf("SERVER: Response length=%zu\n", strlen(response));
     send_to_client(client->fd, response);
 }
 
@@ -1079,11 +1158,16 @@ void reset_game_state(Client* client) {
     client->opponent_id = -1;
     client->is_ready = 0;
     client->is_my_turn = 0;
+    client->wants_rematch = 0;
     client->ship_count = 0;
     client->total_shots = 0;
     client->total_hits = 0;
     client->game_start_time = 0;
     memset(client->shot_log, 0, sizeof(client->shot_log));
+    if(client->match_log) {
+        // Don't free here, will be freed by winner
+        client->match_log = NULL;
+    }
     init_map(client->map);
     init_map(client->enemy_map);
 }
@@ -1159,9 +1243,33 @@ void handle_forfeit(Client* client) {
         
         match.game_duration_seconds = duration;
         
-        // Copy shot logs
-        snprintf(match.match_data, sizeof(match.match_data),
-                "P1:%s;P2:%s;FORFEIT", opponent->shot_log, client->shot_log);
+        // Serialize ship maps
+        char p1_ships[256] = {0};
+        char p2_ships[256] = {0};
+        int offset = 0;
+        for(int r = 0; r < MAP_SIZE && offset < 255; r++) {
+            for(int c = 0; c < MAP_SIZE && offset < 254; c++) {
+                p1_ships[offset++] = opponent->map[r][c];
+            }
+        }
+        p1_ships[offset] = '\0';
+        
+        offset = 0;
+        for(int r = 0; r < MAP_SIZE && offset < 255; r++) {
+            for(int c = 0; c < MAP_SIZE && offset < 254; c++) {
+                p2_ships[offset++] = client->map[r][c];
+            }
+        }
+        p2_ships[offset] = '\0';
+        
+        strncpy(match.player1_ships, p1_ships, sizeof(match.player1_ships) - 1);
+        strncpy(match.player2_ships, p2_ships, sizeof(match.player2_ships) - 1);
+        
+        // Copy match_data with forfeit marker
+        if(opponent->match_log) {
+            snprintf(match.match_data, sizeof(match.match_data),
+                    "%s;FORFEIT", opponent->match_log);
+        }
         
         match.played_at = now;
         
@@ -1191,6 +1299,17 @@ void handle_forfeit(Client* client) {
         
         printf("[FORFEIT] %s surrendered to %s (Match ID=%d, ELO change: %+d vs %+d)\n",
                client->username, opponent->username, match_id, loser_change, winner_change);
+        
+        // Save opponent_id before reset (for rematch)
+        client->last_opponent_id = client->opponent_id;
+        opponent->last_opponent_id = opponent->opponent_id;
+        
+        // Free shared match log
+        if(opponent->match_log) {
+            free(opponent->match_log);
+            opponent->match_log = NULL;
+            client->match_log = NULL;
+        }
         
         // Reset both players
         reset_game_state(client);
@@ -1271,8 +1390,33 @@ void handle_surrender_accept(Client* client) {
     
     match.game_duration_seconds = duration;
     
-    snprintf(match.match_data, sizeof(match.match_data),
-            "P1:%s;P2:%s;SURRENDER", client->shot_log, surrenderer->shot_log);
+    // Serialize ship maps
+    char p1_ships[256] = {0};
+    char p2_ships[256] = {0};
+    int offset = 0;
+    for(int r = 0; r < MAP_SIZE && offset < 255; r++) {
+        for(int c = 0; c < MAP_SIZE && offset < 254; c++) {
+            p1_ships[offset++] = client->map[r][c];
+        }
+    }
+    p1_ships[offset] = '\0';
+    
+    offset = 0;
+    for(int r = 0; r < MAP_SIZE && offset < 255; r++) {
+        for(int c = 0; c < MAP_SIZE && offset < 254; c++) {
+            p2_ships[offset++] = surrenderer->map[r][c];
+        }
+    }
+    p2_ships[offset] = '\0';
+    
+    strncpy(match.player1_ships, p1_ships, sizeof(match.player1_ships) - 1);
+    strncpy(match.player2_ships, p2_ships, sizeof(match.player2_ships) - 1);
+    
+    // Copy match_data with surrender marker
+    if(client->match_log) {
+        snprintf(match.match_data, sizeof(match.match_data),
+                "%s;SURRENDER", client->match_log);
+    }
     
     match.played_at = now;
     
@@ -1283,18 +1427,15 @@ void handle_surrender_accept(Client* client) {
     db_update_score(client->user_id, 100, 1);       // Win
     db_update_score(surrenderer->user_id, 0, 0);    // Loss
     
-    // For surrender: winner gets 0 ELO change, loser still loses ELO as penalty
-    int winner_change = 0;  // No ELO gain for winning via surrender
-    int loser_change = match.player2_elo_gain;  // Loser still loses ELO
-    
-    // Revert winner's ELO back to original (before the match calculation)
-    db_set_elo(client->user_id, match.player1_elo_before);
+    // For surrender: winner still gets ELO based on accuracy, loser loses ELO as penalty
+    int winner_change = match.player1_elo_gain;  // Winner ELO based on accuracy
+    int loser_change = match.player2_elo_gain;   // Loser loses ELO
     
     // Send results
     char win_msg[512];
     snprintf(win_msg, sizeof(win_msg),
             "GAME_OVER:WIN:Opponent surrendered:%d:%d#",
-            match.player1_elo_before, winner_change);
+            match.player1_elo_after, winner_change);
     send_to_client(client->fd, win_msg);
     
     char lose_msg[512];
@@ -1305,6 +1446,17 @@ void handle_surrender_accept(Client* client) {
     
     printf("[SURRENDER] %s surrendered to %s (Match ID=%d)\n",
            surrenderer->username, client->username, match_id);
+    
+    // Save opponent_id before reset (for rematch)
+    client->last_opponent_id = client->opponent_id;
+    surrenderer->last_opponent_id = surrenderer->opponent_id;
+    
+    // Free shared match log
+    if(client->match_log) {
+        free(client->match_log);
+        client->match_log = NULL;
+        surrenderer->match_log = NULL;
+    }
     
     reset_game_state(client);
     reset_game_state(surrenderer);
@@ -1330,6 +1482,147 @@ void handle_surrender_decline(Client* client) {
     pthread_mutex_unlock(&clients_lock);
 }
 
+// ==================== HANDLE REMATCH_REQUEST ====================
+void handle_rematch_request(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    // Mark that this client wants rematch
+    client->wants_rematch = 1;
+    
+    pthread_mutex_lock(&clients_lock);
+    // Use last_opponent_id since opponent_id is reset after game over
+    int opp_id = (client->opponent_id > 0) ? client->opponent_id : client->last_opponent_id;
+    Client* opponent = find_client_by_user_id(opp_id);
+    
+    if(!opponent) {
+        pthread_mutex_unlock(&clients_lock);
+        send_to_client(client->fd, "ERROR:Opponent not found#");
+        client->wants_rematch = 0;
+        return;
+    }
+    
+    // Check if opponent also wants rematch
+    if(opponent->wants_rematch) {
+        // Both want rematch! Start new game immediately
+        printf("[REMATCH] Both %s and %s want rematch, starting new game\n",
+               client->username, opponent->username);
+        
+        // Reset game state but keep opponent_id
+        int saved_opp_client = client->opponent_id;
+        int saved_opp_opponent = opponent->opponent_id;
+        
+        reset_game_state(client);
+        reset_game_state(opponent);
+        
+        // Restore opponent relationship
+        client->opponent_id = saved_opp_client;
+        opponent->opponent_id = saved_opp_opponent;
+        client->in_game = 1;
+        opponent->in_game = 1;
+        
+        // Send GAME_START to both
+        send_to_client(client->fd, "BOTH_WANT_REMATCH#");
+        send_to_client(opponent->fd, "BOTH_WANT_REMATCH#");
+        send_to_client(client->fd, "GAME_START#");
+        send_to_client(opponent->fd, "GAME_START#");
+    } else {
+        // Opponent hasn't requested rematch yet, send request
+        char msg[128];
+        snprintf(msg, sizeof(msg), "REMATCH_REQUEST_FROM:%s#", client->username);
+        send_to_client(opponent->fd, msg);
+        send_to_client(client->fd, "WAITING_REMATCH_RESPONSE#");
+        printf("[REMATCH] %s sent rematch request to %s\n", 
+               client->username, opponent->username);
+    }
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE REMATCH_ACCEPT ====================
+void handle_rematch_accept(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    // Use last_opponent_id since opponent_id is reset after game over
+    int opp_id = (client->opponent_id > 0) ? client->opponent_id : client->last_opponent_id;
+    Client* opponent = find_client_by_user_id(opp_id);
+    
+    if(!opponent) {
+        pthread_mutex_unlock(&clients_lock);
+        send_to_client(client->fd, "ERROR:Opponent not found#");
+        return;
+    }
+    
+    printf("[REMATCH] %s accepted rematch from %s\n", 
+           client->username, opponent->username);
+    
+    // Reset game state but keep opponent_id
+    int saved_opp_client = opp_id;
+    int saved_opp_opponent = (opponent->opponent_id > 0) ? opponent->opponent_id : opponent->last_opponent_id;
+    
+    reset_game_state(client);
+    reset_game_state(opponent);
+    
+    // Restore opponent relationship
+    client->opponent_id = saved_opp_client;
+    opponent->opponent_id = saved_opp_opponent;
+    client->in_game = 1;
+    opponent->in_game = 1;
+    
+    // Send GAME_START to both
+    send_to_client(client->fd, "GAME_START#");
+    send_to_client(opponent->fd, "GAME_START#");
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE REMATCH_DECLINE ====================
+void handle_rematch_decline(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    int opp_id = (client->opponent_id > 0) ? client->opponent_id : client->last_opponent_id;
+    Client* opponent = find_client_by_user_id(opp_id);
+    
+    if(opponent) {
+        send_to_client(opponent->fd, "REMATCH_DECLINED#");
+        printf("[REMATCH] %s declined rematch from %s\n", 
+               client->username, opponent->username);
+        opponent->wants_rematch = 0;
+    }
+    
+    // Reset both to lobby
+    reset_game_state(client);
+    if(opponent) {
+        reset_game_state(opponent);
+    }
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// ==================== HANDLE CANCEL_REMATCH ====================
+void handle_cancel_rematch(Client* client) {
+    if(!client->is_authenticated) {
+        send_to_client(client->fd, "ERROR:Not authenticated#");
+        return;
+    }
+    
+    client->wants_rematch = 0;
+    printf("[REMATCH] %s cancelled rematch request\n", client->username);
+    
+    // Client goes back to lobby
+    reset_game_state(client);
+}
+
 // ==================== CLIENT HANDLER ====================
 void* client_handler(void* arg) {
     Client* client = (Client*)arg;
@@ -1347,6 +1640,10 @@ void* client_handler(void* arg) {
         
         buffer[n] = '\0';
         printf("RECEIVED from fd=%d: %s\n", client->fd, buffer);
+        
+        // Update last activity time for AFK detection
+        client->last_activity_time = time(NULL);
+        client->afk_warned = 0;  // Reset warning flag on any activity
         
         // Split buffer by '#' to handle multiple commands in one packet
         char buffer_copy[BUFF_SIZE];
@@ -1428,8 +1725,29 @@ void* client_handler(void* arg) {
             else if(strcmp(cmd, "SURRENDER_DECLINE#") == 0) {
                 handle_surrender_decline(client);
             }
+            else if(strcmp(cmd, "REMATCH_REQUEST#") == 0) {
+                handle_rematch_request(client);
+            }
+            else if(strcmp(cmd, "REMATCH_ACCEPT#") == 0) {
+                handle_rematch_accept(client);
+            }
+            else if(strcmp(cmd, "REMATCH_DECLINE#") == 0) {
+                handle_rematch_decline(client);
+            }
+            else if(strcmp(cmd, "CANCEL_REMATCH#") == 0) {
+                handle_cancel_rematch(client);
+            }
             else if(strcmp(cmd, "LOGOUT#") == 0) {
                 handle_logout(client);
+            }
+            else if(strcmp(cmd, "PONG#") == 0) {
+                // Heartbeat response - already updated last_activity_time above
+                // No response needed
+            }
+            else if(strcmp(cmd, "AFK_RESPONSE#") == 0) {
+                // Player responded to AFK warning
+                client->afk_warned = 0;
+                printf("[AFK] %s responded to AFK warning\n", client->username);
             }
             else if(strlen(token) > 0) {  // Only report error if token is not empty
                 send_to_client(client->fd, "ERROR:Unknown command#");
@@ -1530,11 +1848,66 @@ void* matchmaking_thread(void *arg) {
     return NULL;
 }
 
+// ==================== AFK DETECTION THREAD ====================
+void* afk_detection_thread(void* arg) {
+    (void)arg;
+    
+    const int AFK_WARNING_TIMEOUT = 180;  // 3 minutes (180 seconds)
+    const int AFK_FORFEIT_TIMEOUT = 300;  // 5 minutes total (300 seconds)
+    
+    while(1) {
+        sleep(30);  // Check every 30 seconds
+        
+        time_t now = time(NULL);
+        
+        pthread_mutex_lock(&clients_lock);
+        for(int i = 0; i < MAX_CLIENTS; i++) {
+            Client* client = &clients[i];
+            
+            // Only check clients in active game
+            if(client->fd == -1 || !client->is_authenticated || !client->in_game) {
+                continue;
+            }
+            
+            if(client->last_activity_time == 0) {
+                client->last_activity_time = now;
+                continue;
+            }
+            
+            int idle_time = (int)(now - client->last_activity_time);
+            
+            // Check for forfeit timeout (5 minutes total)
+            if(idle_time >= AFK_FORFEIT_TIMEOUT && client->afk_warned) {
+                printf("[AFK] %s has been AFK for %d seconds - auto forfeiting\n", 
+                       client->username, idle_time);
+                
+                // Unlock before calling handle_forfeit to avoid deadlock
+                pthread_mutex_unlock(&clients_lock);
+                handle_forfeit(client);
+                pthread_mutex_lock(&clients_lock);
+                continue;
+            }
+            
+            // Check for warning timeout (3 minutes)
+            if(idle_time >= AFK_WARNING_TIMEOUT && !client->afk_warned) {
+                printf("[AFK] %s has been idle for %d seconds - sending warning\n", 
+                       client->username, idle_time);
+                
+                send_to_client(client->fd, "AFK_WARNING#");
+                client->afk_warned = 1;
+            }
+        }
+        pthread_mutex_unlock(&clients_lock);
+    }
+    
+    return NULL;
+}
+
 // ==================== MAIN ====================
 int main() {
     printf("========================================\n");
     printf("BATTLESHIP SERVER WITH MATCH HISTORY\n");
-    printf("Version: 2026-01-05 with db_save_match debug\n");
+    printf("Version: 2026-01-05 with AFK detection\n");
     printf("========================================\n");
     
     // Initialize database
@@ -1566,19 +1939,26 @@ int main() {
     struct sockaddr_in servaddr;
     servaddr.sin_family = AF_INET;
 
-    // Use 127.0.0.1 (localhost) by default
-    inet_pton(AF_INET, "127.0.0.1", &servaddr.sin_addr);
+    // Check for SERVER_IP environment variable, default to all interfaces (0.0.0.0)
+    const char* server_ip = getenv("SERVER_IP");
+    if(!server_ip || strlen(server_ip) == 0) {
+        // Listen on all network interfaces (LAN accessible)
+        servaddr.sin_addr.s_addr = INADDR_ANY;
+        server_ip = "0.0.0.0 (all interfaces)";
+    } else {
+        inet_pton(AF_INET, server_ip, &servaddr.sin_addr);
+    }
     servaddr.sin_port = htons(PORT);
 
     if(bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
         perror("bind");
-        fprintf(stderr, "Failed to bind to 127.0.0.1:%d\n", PORT);
+        fprintf(stderr, "Failed to bind to %s:%d\n", server_ip, PORT);
         return 1;
     }
 
     listen(listenfd, 10);
     printf("\n=================================\n");
-    printf("Server listening on 127.0.0.1:%d\n", PORT);
+    printf("Server listening on %s:%d\n", server_ip, PORT);
     printf("=================================\n");
     printf("Waiting for connections...\n\n");
     
@@ -1587,6 +1967,12 @@ int main() {
     pthread_create(&mm_thread, NULL, matchmaking_thread, NULL);
     pthread_detach(mm_thread);
     printf("[MATCHMAKING] Background thread started\n\n");
+    
+    // Start AFK detection thread
+    pthread_t afk_thread;
+    pthread_create(&afk_thread, NULL, afk_detection_thread, NULL);
+    pthread_detach(afk_thread);
+    printf("[AFK DETECTION] Background thread started\n\n");
     
     // Accept connections
     while(1) {
