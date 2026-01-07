@@ -38,6 +38,8 @@ typedef struct {
     int player1_total_shots;
     int player2_total_shots;
     int game_duration_seconds;
+    char player1_ships[256];
+    char player2_ships[256];
     char match_data[4096];
     time_t played_at;
 } MatchHistory;

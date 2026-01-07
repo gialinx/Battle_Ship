@@ -90,6 +90,7 @@ typedef struct {
     int hit;           // 1 = hit, 0 = miss
     int ship_length;   // Length of ship hit (0 if miss)
     int ship_sunk;     // 1 if ship was sunk with this shot
+    int is_my_shot;    // 1 = my shot, 0 = opponent shot
 } ShotEntry;
 
 // ==================== MATCH DETAIL ====================
@@ -97,10 +98,14 @@ typedef struct {
     int match_id;
     char my_name[50];
     char opponent_name[50];
-    ShotEntry my_shots[100];
-    int my_shot_count;
-    ShotEntry opponent_shots[100];
-    int opponent_shot_count;
+    char my_ships[MAP_SIZE * MAP_SIZE + 1];       // Ship placement map
+    char opponent_ships[MAP_SIZE * MAP_SIZE + 1]; // Opponent ship placement
+    ShotEntry all_shots[200];  // All shots in chronological order
+    int shot_count;
+    ShotEntry my_shots[100];         // Deprecated: kept for backward compatibility
+    int my_shot_count;               // Deprecated
+    ShotEntry opponent_shots[100];   // Deprecated
+    int opponent_shot_count;         // Deprecated
     int winner;  // 1 = me, 0 = opponent
     char date[50];
 } MatchDetail;

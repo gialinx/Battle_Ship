@@ -47,6 +47,8 @@ int db_init() {
         "player1_total_shots INTEGER DEFAULT 0,"
         "player2_total_shots INTEGER DEFAULT 0,"
         "game_duration_seconds INTEGER DEFAULT 0,"
+        "player1_ships TEXT,"
+        "player2_ships TEXT,"
         "match_data TEXT,"
         "played_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
         "FOREIGN KEY(player1_id) REFERENCES users(user_id),"
@@ -321,7 +323,7 @@ int db_save_match(MatchHistory* match) {
                       "player1_elo_gain, player2_elo_gain, player1_elo_after, player2_elo_after, "
                       "player1_hit_diff, player2_hit_diff, player1_accuracy, player2_accuracy, "
                       "player1_total_shots, player2_total_shots, game_duration_seconds, "
-                      "match_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+                      "player1_ships, player2_ships, match_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt;
 
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
@@ -348,7 +350,9 @@ int db_save_match(MatchHistory* match) {
     sqlite3_bind_int(stmt, 16, match->player1_total_shots);
     sqlite3_bind_int(stmt, 17, match->player2_total_shots);
     sqlite3_bind_int(stmt, 18, match->game_duration_seconds);
-    sqlite3_bind_text(stmt, 19, match->match_data, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 19, match->player1_ships, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 20, match->player2_ships, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 21, match->match_data, -1, SQLITE_STATIC);
 
     printf("DEBUG db_save_match: Executing INSERT...\n");
     rc = sqlite3_step(stmt);
@@ -370,7 +374,7 @@ int db_get_match_history(int user_id, MatchHistory** matches, int* count) {
                       "player1_elo_gain, player2_elo_gain, player1_elo_after, player2_elo_after, "
                       "player1_hit_diff, player2_hit_diff, player1_accuracy, player2_accuracy, "
                       "player1_total_shots, player2_total_shots, game_duration_seconds, "
-                      "match_data, strftime('%s', played_at) as played_timestamp "
+                      "player1_ships, player2_ships, match_data, strftime('%s', played_at) as played_timestamp "
                       "FROM match_history WHERE player1_id = ? OR player2_id = ? "
                       "ORDER BY played_at DESC LIMIT 20;";
     sqlite3_stmt* stmt;
@@ -406,8 +410,12 @@ int db_get_match_history(int user_id, MatchHistory** matches, int* count) {
         m->player1_total_shots = sqlite3_column_int(stmt, 16);
         m->player2_total_shots = sqlite3_column_int(stmt, 17);
         m->game_duration_seconds = sqlite3_column_int(stmt, 18);
-        strcpy(m->match_data, (const char*)sqlite3_column_text(stmt, 19));
-        m->played_at = sqlite3_column_int64(stmt, 20);
+        const char* p1_ships = (const char*)sqlite3_column_text(stmt, 19);
+        const char* p2_ships = (const char*)sqlite3_column_text(stmt, 20);
+        strncpy(m->player1_ships, p1_ships ? p1_ships : "", sizeof(m->player1_ships) - 1);
+        strncpy(m->player2_ships, p2_ships ? p2_ships : "", sizeof(m->player2_ships) - 1);
+        strcpy(m->match_data, (const char*)sqlite3_column_text(stmt, 21));
+        m->played_at = sqlite3_column_int64(stmt, 22);
         (*count)++;
     }
 
@@ -420,7 +428,7 @@ int db_get_match_for_rewatch(int match_id, MatchHistory* match) {
                       "player1_score, player2_score, player1_elo_before, player2_elo_before, "
                       "player1_elo_gain, player2_elo_gain, player1_elo_after, player2_elo_after, "
                       "player1_hit_diff, player2_hit_diff, player1_accuracy, player2_accuracy, "
-                      "match_data, played_at "
+                      "player1_ships, player2_ships, match_data, played_at "
                       "FROM match_history WHERE match_id = ?;";
     sqlite3_stmt* stmt;
 
@@ -447,8 +455,12 @@ int db_get_match_for_rewatch(int match_id, MatchHistory* match) {
         match->player2_hit_diff = sqlite3_column_int(stmt, 13);
         match->player1_accuracy = sqlite3_column_double(stmt, 14);
         match->player2_accuracy = sqlite3_column_double(stmt, 15);
-        strcpy(match->match_data, (const char*)sqlite3_column_text(stmt, 16));
-        match->played_at = sqlite3_column_int(stmt, 17);
+        const char* p1_ships = (const char*)sqlite3_column_text(stmt, 16);
+        const char* p2_ships = (const char*)sqlite3_column_text(stmt, 17);
+        strncpy(match->player1_ships, p1_ships ? p1_ships : "", sizeof(match->player1_ships) - 1);
+        strncpy(match->player2_ships, p2_ships ? p2_ships : "", sizeof(match->player2_ships) - 1);
+        strcpy(match->match_data, (const char*)sqlite3_column_text(stmt, 18));
+        match->played_at = sqlite3_column_int(stmt, 19);
 
         sqlite3_finalize(stmt);
         return 0;

@@ -36,11 +36,18 @@
 GameData game;
 pthread_mutex_t game_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// Global variable for server IP
-const char* server_ip = "127.0.0.1"; // Default to localhost
+// Global variable for server IP - can be set via environment variable
+const char* server_ip = NULL;
 
 // ==================== INITIALIZE GAME ====================
 void init_game() {
+    // Get server IP from environment variable or use default
+    server_ip = getenv("SERVER_IP");
+    if(!server_ip || strlen(server_ip) == 0) {
+        server_ip = "127.0.0.1"; // Default to localhost
+    }
+    printf("CLIENT: Will connect to server at %s:5501\n", server_ip);
+    
     fprintf(stderr, "DEBUG: Starting SDL_Init...\n");
     if(SDL_Init(SDL_INIT_VIDEO) < 0) {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
@@ -329,6 +336,13 @@ void handle_events() {
             // AFK warning can appear in any state during active game
             if(game.afk_warning_visible) {
                 afk_warning_screen_handle_event(&e, &game);
+            }
+        }
+        
+        // Mouse wheel for scrolling in match detail
+        if(e.type == SDL_MOUSEWHEEL) {
+            if(game.state == STATE_MATCH_DETAIL) {
+                match_detail_screen_handle_wheel(e.wheel.y);
             }
         }
         

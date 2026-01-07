@@ -766,71 +766,173 @@ int parse_server_message(GameData* game, const char* msg) {
 
     // Match detail
     if(strncmp(msg, "MATCH_DETAIL:", 13) == 0) {
-        // Format: MATCH_DETAIL:match_id:match_data
-        // match_data contains shot history (alternating between players)
-        // For now, just store the raw match_data string
+        // Format: MATCH_DETAIL:match_id:winner:my_name:opponent_name:my_ships:opponent_ships:match_data#
+        // match_data format: P1_SHOTS|P2_SHOTS
+        // Each shot: x,y,hit,ship_len,sunk;
         
         int match_id = 0;
+        int winner = 0;
+        char my_name[50] = {0};
+        char opponent_name[50] = {0};
+        char my_ships[MAP_SIZE * MAP_SIZE + 1] = {0};
+        char opponent_ships[MAP_SIZE * MAP_SIZE + 1] = {0};
         char match_data[4096] = {0};
         
-        sscanf(msg + 13, "%d:%4095[^#]", &match_id, match_data);
+        // Parse: match_id:winner:my_name:opponent_name:my_ships:opponent_ships:match_data
+        const char* ptr = msg + 13;
+        sscanf(ptr, "%d:%d:", &match_id, &winner);
         
-        // Parse match_data into shot entries
-        // Format: x,y,hit,ship_len,sunk;x,y,hit,ship_len,sunk;...
-        // Alternating: my shot, opponent shot, my shot, opponent shot, ...
+        // Skip match_id and winner
+        ptr = strchr(ptr, ':'); if(ptr) ptr++;
+        ptr = strchr(ptr, ':'); if(ptr) ptr++;
         
+        // Extract my_name
+        const char* next_colon = strchr(ptr, ':');
+        if(next_colon) {
+            int len = next_colon - ptr;
+            if(len > 0 && len < 50) {
+                strncpy(my_name, ptr, len);
+                my_name[len] = '\0';
+            }
+            ptr = next_colon + 1;
+        }
+        
+        // Extract opponent_name
+        next_colon = strchr(ptr, ':');
+        if(next_colon) {
+            int len = next_colon - ptr;
+            if(len > 0 && len < 50) {
+                strncpy(opponent_name, ptr, len);
+                opponent_name[len] = '\0';
+            }
+            ptr = next_colon + 1;
+        }
+        
+        // Extract my_ships
+        next_colon = strchr(ptr, ':');
+        if(next_colon) {
+            int len = next_colon - ptr;
+            if(len > 0 && len < MAP_SIZE * MAP_SIZE + 1) {
+                strncpy(my_ships, ptr, len);
+                my_ships[len] = '\0';
+            }
+            ptr = next_colon + 1;
+        }
+        
+        // Extract opponent_ships
+        next_colon = strchr(ptr, ':');
+        if(next_colon) {
+            int len = next_colon - ptr;
+            if(len > 0 && len < MAP_SIZE * MAP_SIZE + 1) {
+                strncpy(opponent_ships, ptr, len);
+                opponent_ships[len] = '\0';
+            }
+            ptr = next_colon + 1;
+        }
+        
+        // Extract match_data (rest until #)
+        const char* end = strchr(ptr, '#');
+        if(end) {
+            int len = end - ptr;
+            if(len > 0 && len < 4096) {
+                strncpy(match_data, ptr, len);
+                match_data[len] = '\0';
+            }
+        }
+        
+        printf("CLIENT: Parsing MATCH_DETAIL - my_user_id=%d, match_data length=%zu\n", 
+               game->my_user_id, strlen(match_data));
+        printf("CLIENT: First 100 chars: %.100s\n", match_data);
+        
+        // Store in game data
         game->current_match_detail.match_id = match_id;
+        game->current_match_detail.winner = winner;
+        strncpy(game->current_match_detail.my_name, my_name, sizeof(game->current_match_detail.my_name) - 1);
+        strncpy(game->current_match_detail.opponent_name, opponent_name, sizeof(game->current_match_detail.opponent_name) - 1);
+        strncpy(game->current_match_detail.my_ships, my_ships, sizeof(game->current_match_detail.my_ships) - 1);
+        strncpy(game->current_match_detail.opponent_ships, opponent_ships, sizeof(game->current_match_detail.opponent_ships) - 1);
         game->current_match_detail.my_shot_count = 0;
         game->current_match_detail.opponent_shot_count = 0;
+        game->current_match_detail.shot_count = 0;  // Reset chronological shot count
         
+        // Parse match_data: player_id:x,y,hit,ship_len,sunk;player_id:x,y,hit,ship_len,sunk;...
         if(strlen(match_data) > 0) {
             char temp[4096];
             strncpy(temp, match_data, sizeof(temp) - 1);
             temp[sizeof(temp) - 1] = '\0';
             
+            // Parse shots: each shot has format "player_id:x,y,hit,ship_len,sunk;"
             char* saveptr = NULL;
             char* token = strtok_r(temp, ";", &saveptr);
-            int shot_index = 0;
-            
-            while(token) {
-                int x, y, hit, ship_len, sunk;
-                if(sscanf(token, "%d,%d,%d,%d,%d", &x, &y, &hit, &ship_len, &sunk) == 5) {
-                    // Alternate between my shots and opponent shots
-                    if(shot_index % 2 == 0) {
-                        // My shot
-                        if(game->current_match_detail.my_shot_count < 100) {
-                            ShotEntry* shot = &game->current_match_detail.my_shots[game->current_match_detail.my_shot_count];
-                            shot->x = x;
-                            shot->y = y;
-                            shot->hit = hit;
-                            shot->ship_length = ship_len;
-                            shot->ship_sunk = sunk;
-                            game->current_match_detail.my_shot_count++;
-                        }
-                    } else {
-                        // Opponent shot
-                        if(game->current_match_detail.opponent_shot_count < 100) {
-                            ShotEntry* shot = &game->current_match_detail.opponent_shots[game->current_match_detail.opponent_shot_count];
-                            shot->x = x;
-                            shot->y = y;
-                            shot->hit = hit;
-                            shot->ship_length = ship_len;
-                            shot->ship_sunk = sunk;
-                            game->current_match_detail.opponent_shot_count++;
-                        }
-                    }
+            int token_count = 0;
+            while(token && game->current_match_detail.shot_count < 200) {
+                token_count++;
+                // Check if this is a special marker (FORFEIT, SURRENDER)
+                if(strcmp(token, "FORFEIT") == 0 || strcmp(token, "SURRENDER") == 0) {
+                    printf("CLIENT: Skipping marker: %s\n", token);
+                    token = strtok_r(NULL, ";", &saveptr);
+                    continue;
                 }
-                shot_index++;
+                
+                int player_id = 0;
+                int x, y, hit, ship_len, sunk;
+                
+                // Parse: player_id:x,y,hit,ship_len,sunk
+                int parsed = sscanf(token, "%d:%d,%d,%d,%d,%d", &player_id, &x, &y, &hit, &ship_len, &sunk);
+                if(parsed == 6) {
+                    // Determine which player this shot belongs to
+                    int is_my_shot = (player_id == game->my_user_id);
+                    
+                    printf("CLIENT: Token #%d: '%s' -> P%d at (%d,%d) hit=%d, is_mine=%d (my_id=%d)\n", 
+                           token_count, token, player_id, x, y, hit, is_my_shot, game->my_user_id);
+                    
+                    // Add to chronological list
+                    ShotEntry* shot = &game->current_match_detail.all_shots[game->current_match_detail.shot_count];
+                    shot->x = x;
+                    shot->y = y;
+                    shot->hit = hit;
+                    shot->ship_length = ship_len;
+                    shot->ship_sunk = sunk;
+                    shot->is_my_shot = is_my_shot;
+                    game->current_match_detail.shot_count++;
+                    
+                    // Also add to old arrays for backward compatibility
+                    if(is_my_shot && game->current_match_detail.my_shot_count < 100) {
+                        ShotEntry* my_shot = &game->current_match_detail.my_shots[game->current_match_detail.my_shot_count];
+                        my_shot->x = x;
+                        my_shot->y = y;
+                        my_shot->hit = hit;
+                        my_shot->ship_length = ship_len;
+                        my_shot->ship_sunk = sunk;
+                        my_shot->is_my_shot = 1;
+                        game->current_match_detail.my_shot_count++;
+                    } else if(!is_my_shot && game->current_match_detail.opponent_shot_count < 100) {
+                        ShotEntry* opp_shot = &game->current_match_detail.opponent_shots[game->current_match_detail.opponent_shot_count];
+                        opp_shot->x = x;
+                        opp_shot->y = y;
+                        opp_shot->hit = hit;
+                        opp_shot->ship_length = ship_len;
+                        opp_shot->ship_sunk = sunk;
+                        opp_shot->is_my_shot = 0;
+                        game->current_match_detail.opponent_shot_count++;
+                    }
+                } else {
+                    printf("CLIENT: Failed to parse token #%d: '%s' (parsed %d fields)\n", 
+                           token_count, token, parsed);
+                }
+                
                 token = strtok_r(NULL, ";", &saveptr);
             }
+            
+            printf("CLIENT: Parsed %d tokens, final shot_count=%d\n", token_count, game->current_match_detail.shot_count);
         }
+        
+        printf("CLIENT: Match detail loaded - Match #%d, Winner=%d, Total shots=%d (My=%d, Opp=%d)\n",
+               match_id, winner, game->current_match_detail.shot_count,
+               game->current_match_detail.my_shot_count, game->current_match_detail.opponent_shot_count);
         
         // Transition to detail screen
         game->state = STATE_MATCH_DETAIL;
-        
-        printf("CLIENT: Match detail loaded: match_id=%d, my_shots=%d, opponent_shots=%d\n", 
-               match_id, game->current_match_detail.my_shot_count, 
-               game->current_match_detail.opponent_shot_count);
         return 1;
     }
     
