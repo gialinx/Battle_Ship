@@ -6,15 +6,36 @@ echo "  BATTLESHIP SERVER - LAN MODE"
 echo "========================================="
 echo ""
 
-# Get server's IP address
-SERVER_IP=$(ip addr show | grep "inet " | grep -v 127.0.0.1 | head -1 | awk '{print $2}' | cut -d/ -f1)
+# Check if SERVER_IP is already set
+if [ -z "$SERVER_IP" ]; then
+    # Auto-detect IP (prefer 10.0.2.x if available)
+    AUTO_IP=$(ip addr show | grep "inet " | grep "10.0.2\." | head -1 | awk '{print $2}' | cut -d/ -f1)
+    if [ -z "$AUTO_IP" ]; then
+        # Fallback to any non-localhost IP
+        AUTO_IP=$(ip addr show | grep "inet " | grep -v 127.0.0.1 | head -1 | awk '{print $2}' | cut -d/ -f1)
+    fi
+    
+    if [ -z "$AUTO_IP" ]; then
+        echo "⚠️  Could not auto-detect network IP"
+        read -p "Enter server IP manually (or press Enter for 0.0.0.0): " SERVER_IP
+    else
+        echo "🌐 Detected IP: $AUTO_IP"
+        read -p "Use this IP or enter manually [Y/n/IP]: " CHOICE
+        if [ "$CHOICE" = "n" ] || [ "$CHOICE" = "N" ]; then
+            read -p "Enter server IP: " SERVER_IP
+        elif [[ "$CHOICE" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            SERVER_IP="$CHOICE"
+        else
+            SERVER_IP="$AUTO_IP"
+        fi
+    fi
+fi
 
 if [ -z "$SERVER_IP" ]; then
-    echo "⚠️  Warning: Could not detect network IP"
     echo "   Server will listen on all interfaces (0.0.0.0)"
     echo ""
 else
-    echo "🌐 Network IP detected: $SERVER_IP"
+    echo "✅ Using server IP: $SERVER_IP"
     echo "   Clients should connect to: $SERVER_IP"
     echo ""
 fi
