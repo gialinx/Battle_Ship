@@ -213,7 +213,8 @@ typedef struct {
     int logout_requested;
     
     // AFK detection
-    int afk_warning_visible;  // 1 if AFK warning dialog is shown
+    int afk_warning_visible;        // 1 if AFK warning dialog is shown
+    unsigned int afk_warning_time;  // SDL_GetTicks() when warning appeared
 
     // Gameplay
     int is_my_turn;

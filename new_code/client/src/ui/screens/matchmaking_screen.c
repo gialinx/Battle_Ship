@@ -75,7 +75,7 @@ void matchmaking_screen_render(SDL_Renderer* renderer, GameData* game) {
     int cancel_hover = (mx >= 350 && mx <= 550 && my >= 450 && my <= 500);
 
     render_button(renderer, game->font_small, "CANCEL", 
-                 350, 450, 200, 50, red, cancel_hover, 1);
+                 400, 450, 200, 50, red, cancel_hover, 1);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }

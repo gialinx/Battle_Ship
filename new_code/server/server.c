@@ -270,6 +270,7 @@ void process_fire(Player *attacker, Player *target, int x, int y, int attacker_i
     // MISS
     if(cell=='-' || cell=='x' || cell=='o' || cell=='@'){
         attacker->enemy_map[y][x]='x';
+        target->map[y][x]='x';  // Also mark miss on target's own map
         strcat(match.moves_log, "MISS;");
         
         char res[64]; 
