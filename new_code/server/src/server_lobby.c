@@ -645,6 +645,7 @@ void handle_fire(Client* client, char* buffer) {
     if(cell == '-') {
         // MISS
         client->enemy_map[y][x] = 'x';
+        opponent->map[y][x] = 'x';
 
         char res[64];
         snprintf(res, sizeof(res), "RESULT:MISS,%d,%d#", x+1, y+1);
@@ -1319,6 +1320,143 @@ void handle_forfeit(Client* client) {
     pthread_mutex_unlock(&clients_lock);
 }
 
+// ==================== HANDLE DISCONNECT ====================
+// Called when a client disconnects unexpectedly (network issue, crash, etc.)
+void handle_disconnect(Client* client) {
+    // Check if client was in a game
+    if(!client->in_game || client->opponent_id <= 0) {
+        // Not in game, just cleanup normally
+        return;
+    }
+    
+    pthread_mutex_lock(&clients_lock);
+    Client* opponent = find_client_by_user_id(client->opponent_id);
+    
+    if(!opponent) {
+        // Opponent not found, just reset this client
+        reset_game_state(client);
+        pthread_mutex_unlock(&clients_lock);
+        return;
+    }
+    
+    // Check if game was active (both players ready)
+    int during_placement = (!client->is_ready || !opponent->is_ready);
+    
+    if(during_placement) {
+        // During placement - no ELO change, just notify opponent
+        char msg[256];
+        snprintf(msg, sizeof(msg), "OPPONENT_LEFT_PLACEMENT:%s#", client->username);
+        send_to_client(opponent->fd, msg);
+        
+        // Reset both players
+        reset_game_state(client);
+        reset_game_state(opponent);
+        
+        printf("[DISCONNECT] %s disconnected during placement vs %s (no ELO change)\n", 
+               client->username, opponent->username);
+    } else {
+        // During active game - record as disconnect/forfeit loss
+        UserProfile winner_profile, loser_profile;
+        db_get_user_profile(opponent->user_id, &winner_profile);
+        db_get_user_profile(client->user_id, &loser_profile);
+        
+        // Calculate game duration
+        time_t now = time(NULL);
+        int duration = (client->game_start_time > 0) ? (now - client->game_start_time) : 0;
+        
+        // Create match history
+        MatchHistory match;
+        memset(&match, 0, sizeof(MatchHistory));
+        
+        match.player1_id = opponent->user_id;  // Winner
+        match.player2_id = client->user_id;    // Loser (disconnected)
+        match.winner_id = opponent->user_id;
+        match.player1_score = 100;  // Winner gets full score
+        match.player2_score = 0;    // Disconnect = 0 score
+        
+        // Calculate accuracy
+        match.player1_total_shots = opponent->total_shots;
+        match.player1_accuracy = (opponent->total_shots > 0) ? 
+            ((float)opponent->total_hits / opponent->total_shots) : 0.0f;
+        match.player1_hit_diff = opponent->total_hits;
+        
+        match.player2_total_shots = client->total_shots;
+        match.player2_accuracy = (client->total_shots > 0) ?
+            ((float)client->total_hits / client->total_shots) : 0.0f;
+        match.player2_hit_diff = client->total_hits;
+        
+        match.game_duration_seconds = duration;
+        
+        // Serialize ship maps
+        char p1_ships[256] = {0};
+        char p2_ships[256] = {0};
+        int offset = 0;
+        for(int r = 0; r < MAP_SIZE && offset < 255; r++) {
+            for(int c = 0; c < MAP_SIZE && offset < 254; c++) {
+                p1_ships[offset++] = opponent->map[r][c];
+            }
+        }
+        p1_ships[offset] = '\0';
+        
+        offset = 0;
+        for(int r = 0; r < MAP_SIZE && offset < 255; r++) {
+            for(int c = 0; c < MAP_SIZE && offset < 254; c++) {
+                p2_ships[offset++] = client->map[r][c];
+            }
+        }
+        p2_ships[offset] = '\0';
+        
+        strncpy(match.player1_ships, p1_ships, sizeof(match.player1_ships) - 1);
+        strncpy(match.player2_ships, p2_ships, sizeof(match.player2_ships) - 1);
+        
+        // Copy match_data with disconnect marker
+        if(opponent->match_log) {
+            snprintf(match.match_data, sizeof(match.match_data),
+                    "%s;DISCONNECT", opponent->match_log);
+        } else {
+            snprintf(match.match_data, sizeof(match.match_data), "DISCONNECT");
+        }
+        
+        match.played_at = now;
+        
+        // Save match (this will calculate and update ELO automatically)
+        int match_id = db_save_match(&match);
+        
+        // Update wins/losses
+        db_update_score(opponent->user_id, 100, 1);  // Win
+        db_update_score(client->user_id, 0, 0);      // Loss
+        
+        // Get ELO changes from match struct (updated by db_save_match)
+        int winner_change = match.player1_elo_gain;
+        
+        // Send results to winner only (loser disconnected)
+        char win_msg[512];
+        snprintf(win_msg, sizeof(win_msg),
+                "GAME_OVER:WIN:Opponent disconnected:%d:%d#",
+                match.player1_elo_after, winner_change);
+        send_to_client(opponent->fd, win_msg);
+        
+        printf("[DISCONNECT] %s disconnected from match vs %s (Match ID=%d, ELO change: %+d)\n",
+               client->username, opponent->username, match_id, winner_change);
+        
+        // Save opponent_id before reset (for rematch - though unlikely after disconnect)
+        opponent->last_opponent_id = opponent->opponent_id;
+        
+        // Free shared match log
+        if(opponent->match_log) {
+            free(opponent->match_log);
+            opponent->match_log = NULL;
+            client->match_log = NULL;
+        }
+        
+        // Reset both players
+        reset_game_state(client);
+        reset_game_state(opponent);
+    }
+    
+    pthread_mutex_unlock(&clients_lock);
+}
+
 // ==================== HANDLE SURRENDER_REQUEST ====================
 void handle_surrender_request(Client* client) {
     if(!client->is_authenticated || !client->in_game || client->opponent_id <= 0) {
@@ -1758,7 +1896,9 @@ void* client_handler(void* arg) {
         }
     }
     
-    // Cleanup
+    // Cleanup - handle disconnect if client was in a game
+    handle_disconnect(client);
+    
     if(client->user_id > 0) {
         mm_remove_player(client->user_id);  // Remove from matchmaking queue if present
         db_logout_user(client->user_id);
@@ -1852,8 +1992,8 @@ void* matchmaking_thread(void *arg) {
 void* afk_detection_thread(void* arg) {
     (void)arg;
     
-    const int AFK_WARNING_TIMEOUT = 180;  // 3 minutes (180 seconds)
-    const int AFK_FORFEIT_TIMEOUT = 300;  // 5 minutes total (300 seconds)
+    const int AFK_WARNING_TIMEOUT = 60;   // 1 minute (60 seconds)
+    const int AFK_FORFEIT_TIMEOUT = 180;  // 3 minutes total (180 seconds)
     
     while(1) {
         sleep(30);  // Check every 30 seconds

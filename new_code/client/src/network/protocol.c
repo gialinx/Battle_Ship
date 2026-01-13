@@ -937,9 +937,23 @@ int parse_server_message(GameData* game, const char* msg) {
     }
     
     // AFK warning
-    if(strcmp(msg, "AFK_WARNING#") == 0) {
+    if(strcmp(msg, "AFK_WARNING") == 0 || strcmp(msg, "AFK_WARNING#") == 0) {
         game->afk_warning_visible = 1;
-        printf("CLIENT: AFK warning received\n");
+        game->afk_warning_time = SDL_GetTicks();  // Save time when warning appeared
+        strcpy(game->message, "⚠️ AFK WARNING! Please respond or you will forfeit!");
+        printf("CLIENT: AFK warning received, popup visible = %d\n", game->afk_warning_visible);
+        
+        // Play warning sound if available
+        if(game->assets.sound_count > 0) {
+            // Try to play a warning/alert sound
+            for(int i = 0; i < game->assets.sound_count; i++) {
+                if(game->assets.sounds[i].loaded && game->assets.sounds[i].chunk) {
+                    Mix_PlayChannel(-1, game->assets.sounds[i].chunk, 0);
+                    break;
+                }
+            }
+        }
+        
         return 1;
     }
 
