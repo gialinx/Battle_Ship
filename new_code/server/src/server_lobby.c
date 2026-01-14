@@ -876,8 +876,10 @@ void handle_get_match_history(Client* client) {
         int is_player1 = (m->player1_id == client->user_id);
         int opponent_id = is_player1 ? m->player2_id : m->player1_id;
         int my_shots = is_player1 ? m->player1_total_shots : m->player2_total_shots;
-        int my_hits = is_player1 ? (m->player1_total_shots > 0 ? (int)(m->player1_accuracy * my_shots / 100.0f) : 0) 
-                                 : (m->player2_total_shots > 0 ? (int)(m->player2_accuracy * my_shots / 100.0f) : 0);
+        float my_accuracy = is_player1 ? m->player1_accuracy : m->player2_accuracy;
+        
+        // Calculate hits from accuracy (stored as percentage 0-100)
+        int my_hits = (my_shots > 0 && my_accuracy > 0) ? (int)((my_accuracy / 100.0f) * my_shots + 0.5f) : 0;
         int my_misses = my_shots - my_hits;
         int my_elo_change = is_player1 ? m->player1_elo_gain : m->player2_elo_gain;
         int is_win = (m->winner_id == client->user_id) ? 1 : 0;
@@ -889,8 +891,9 @@ void handle_get_match_history(Client* client) {
             strcpy(opponent_name, opp_profile.username);
         }
         
-        printf("SERVER: Match %d - opponent: %s, result: %s, elo: %+d\n",
-               m->match_id, opponent_name, is_win ? "WIN" : "LOSS", my_elo_change);
+        printf("SERVER: Match %d - opponent: %s, result: %s, elo: %+d, shots=%d, acc=%.2f%%, hits=%d\n",
+               m->match_id, opponent_name, is_win ? "WIN" : "LOSS", my_elo_change, 
+               my_shots, my_accuracy, my_hits);
         
         // Format: |match_id,timestamp,opponent_id,opponent_name,is_win,hits,misses,elo_change,duration
         offset += snprintf(response + offset, sizeof(response) - offset, 
