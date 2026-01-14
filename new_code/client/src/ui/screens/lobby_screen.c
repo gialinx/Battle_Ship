@@ -215,7 +215,7 @@ void render_main_content(SDL_Renderer* renderer, GameData* game) {
             
             // Match entries (show up to 7 matches)
             int entry_y = content_y + 92;
-            for(int i = 0; i < game->match_history_count && i < 7; i++) {
+            for(int i = 0; i < game->match_history_count && i < 10; i++) {
                 MatchHistoryEntry* m = &game->match_history[i];
                 
                 // Row background (alternating colors)
@@ -491,7 +491,7 @@ void lobby_screen_handle_click(GameData* game, int x, int y) {
         int entry_y = content_y + 92;
         
         for(int i = 0; i < game->match_history_count && i < 7; i++) {
-            SDL_Rect detail_btn = {content_x + 520, entry_y - 3, 50, 25};
+            SDL_Rect detail_btn = {content_x + 570, entry_y - 3, 50, 25};
             if(x >= detail_btn.x && x <= detail_btn.x + detail_btn.w &&
                y >= detail_btn.y && y <= detail_btn.y + detail_btn.h) {
                 // Send request for match details

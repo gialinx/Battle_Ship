@@ -185,6 +185,7 @@ void match_detail_screen_handle_click(int mouse_x, int mouse_y, GameData* game) 
        mouse_y >= BACK_BTN_Y && mouse_y <= BACK_BTN_Y + BACK_BTN_H) {
         scroll_offset = 0;  // Reset scroll
         game->state = STATE_MATCH_HISTORY;
+        // game->state = STATE_LOBBY;
         return;
     }
 }
