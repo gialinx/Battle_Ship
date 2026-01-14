@@ -1909,6 +1909,8 @@ void* client_handler(void* arg) {
     client->fd = -1;
     client->is_authenticated = 0;
     client->in_game = 0;
+    client->user_id = 0;  // Reset user_id to allow re-login
+    memset(client->username, 0, sizeof(client->username));  // Clear username
     pthread_mutex_unlock(&clients_lock);
     
     return NULL;

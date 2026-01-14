@@ -194,20 +194,20 @@ void render_main_content(SDL_Renderer* renderer, GameData* game) {
                        content_x + 180, content_y + 150, gray);
         } else {
             // Column headers background
-            SDL_Rect header_bg = {content_x + 10, content_y + 55, 580, 30};
+            SDL_Rect header_bg = {content_x + 10, content_y + 55, 610, 30};
             SDL_SetRenderDrawColor(renderer, 35, 45, 65, 255);
             SDL_RenderFillRect(renderer, &header_bg);
             
             // Column headers
             int header_y = content_y + 62;
             render_text(renderer, game->font_small, "DATE", content_x + 15, header_y, (SDL_Color){200, 200, 200, 255});
-            render_text(renderer, game->font_small, "OPPONENT", content_x + 85, header_y, (SDL_Color){200, 200, 200, 255});
-            render_text(renderer, game->font_small, "RESULT", content_x + 195, header_y, (SDL_Color){200, 200, 200, 255});
-            render_text(renderer, game->font_small, "HIT", content_x + 270, header_y, (SDL_Color){200, 200, 200, 255});
-            render_text(renderer, game->font_small, "MISS", content_x + 325, header_y, (SDL_Color){200, 200, 200, 255});
-            render_text(renderer, game->font_small, "ACC%", content_x + 385, header_y, (SDL_Color){200, 200, 200, 255});
-            render_text(renderer, game->font_small, "ELO", content_x + 450, header_y, (SDL_Color){200, 200, 200, 255});
-            render_text(renderer, game->font_small, "VIEW", content_x + 530, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "OPPONENT", content_x + 130, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "RESULT", content_x + 235, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "HIT", content_x + 310, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "MISS", content_x + 365, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "ACC%", content_x + 425, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "ELO", content_x + 490, header_y, (SDL_Color){200, 200, 200, 255});
+            render_text(renderer, game->font_small, "VIEW", content_x + 570, header_y, (SDL_Color){200, 200, 200, 255});
             
             // Get mouse position for hover
             int mx, my;
@@ -219,7 +219,7 @@ void render_main_content(SDL_Renderer* renderer, GameData* game) {
                 MatchHistoryEntry* m = &game->match_history[i];
                 
                 // Row background (alternating colors)
-                SDL_Rect row_bg = {content_x + 10, entry_y - 5, 580, 40};
+                SDL_Rect row_bg = {content_x + 10, entry_y - 5, 610, 40};
                 int is_hover = (mx >= row_bg.x && mx <= row_bg.x + row_bg.w &&
                                my >= row_bg.y && my <= row_bg.y + row_bg.h);
                 
@@ -250,38 +250,38 @@ void render_main_content(SDL_Renderer* renderer, GameData* game) {
                 // Opponent
                 char opp[20];
                 snprintf(opp, sizeof(opp), "%.10s", m->opponent_name);
-                render_text(renderer, game->font_small, opp, content_x + 85, entry_y, (SDL_Color){100, 200, 255, 255});
+                render_text(renderer, game->font_small, opp, content_x + 130, entry_y, (SDL_Color){100, 200, 255, 255});
                 
                 // Result
                 SDL_Color result_color = m->result ? (SDL_Color){50, 255, 100, 255} : (SDL_Color){255, 100, 100, 255};
                 render_text(renderer, game->font_small, m->result ? "WIN" : "LOSS", 
-                           content_x + 195, entry_y, result_color);
+                           content_x + 235, entry_y, result_color);
                 
                 // HIT
                 char hit_str[10];
                 snprintf(hit_str, sizeof(hit_str), "%d", m->my_hits);
-                render_text(renderer, game->font_small, hit_str, content_x + 275, entry_y, (SDL_Color){100, 255, 150, 255});
+                render_text(renderer, game->font_small, hit_str, content_x + 310, entry_y, (SDL_Color){100, 255, 150, 255});
                 
                 // MISS
                 char miss_str[10];
                 snprintf(miss_str, sizeof(miss_str), "%d", m->my_misses);
-                render_text(renderer, game->font_small, miss_str, content_x + 330, entry_y, (SDL_Color){255, 150, 100, 255});
+                render_text(renderer, game->font_small, miss_str, content_x + 365, entry_y, (SDL_Color){255, 150, 100, 255});
                 
                 // Accuracy %
                 int total = m->my_hits + m->my_misses;
                 float acc = total > 0 ? (float)m->my_hits * 100 / total : 0;
                 char acc_str[10];
                 snprintf(acc_str, sizeof(acc_str), "%.0f%%", acc);
-                render_text(renderer, game->font_small, acc_str, content_x + 385, entry_y, (SDL_Color){200, 200, 100, 255});
+                render_text(renderer, game->font_small, acc_str, content_x + 425, entry_y, (SDL_Color){200, 200, 100, 255});
                 
                 // ELO change
                 char elo[20];
                 snprintf(elo, sizeof(elo), "%+d", m->elo_change);
                 SDL_Color elo_color = m->elo_change > 0 ? (SDL_Color){50, 255, 100, 255} : (SDL_Color){255, 100, 100, 255};
-                render_text(renderer, game->font_small, elo, content_x + 450, entry_y, elo_color);
+                render_text(renderer, game->font_small, elo, content_x + 490, entry_y, elo_color);
                 
                 // View Details button with icon
-                SDL_Rect detail_btn = {content_x + 520, entry_y - 3, 50, 25};
+                SDL_Rect detail_btn = {content_x + 570, entry_y - 3, 50, 25};
                 int btn_hover = (mx >= detail_btn.x && mx <= detail_btn.x + detail_btn.w &&
                                 my >= detail_btn.y && my <= detail_btn.y + detail_btn.h);
                 

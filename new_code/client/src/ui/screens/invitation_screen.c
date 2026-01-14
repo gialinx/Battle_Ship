@@ -58,13 +58,13 @@ void invitation_screen_render(SDL_Renderer* renderer, GameData* game) {
     // ==================== STATE: WAITING FOR RESPONSE ====================
     else if(game->state == STATE_WAITING_INVITE) {
         // Title
-        render_text(renderer, game->font, "Invitation Sent", 350, 200, green);
+        render_text(renderer, game->font, "Invitation Sent", 390, 200, green);
 
         // Message
         char msg[256];
         snprintf(msg, sizeof(msg), "Invitation sent to %s.", game->invited_username);
-        render_text(renderer, game->font_small, msg, 260, 270, white);
-        render_text(renderer, game->font_small, "Waiting for response...", 310, 310, yellow);
+        render_text(renderer, game->font_small, msg, 320, 300, white);
+        render_text(renderer, game->font_small, "Waiting for response...", 380, 340, yellow);
 
         // Cancel button
         int cancel_x = 350;
@@ -80,13 +80,13 @@ void invitation_screen_render(SDL_Renderer* renderer, GameData* game) {
     // ==================== STATE: RECEIVED INVITE ====================
     else if(game->state == STATE_RECEIVED_INVITE) {
         // Title
-        render_text(renderer, game->font, "Game Invitation", 350, 200, cyan);
+        render_text(renderer, game->font, "Game Invitation", 390, 200, cyan);
 
         // Message
         char msg[256];
         snprintf(msg, sizeof(msg), "%s has sent you an invitation to play", 
                  game->inviter_username);
-        render_text(renderer, game->font_small, msg, 210, 270, white);
+        render_text(renderer, game->font_small, msg, 280, 270, white);
 
         // Accept button
         int accept_x = 250;

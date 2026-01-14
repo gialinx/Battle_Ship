@@ -6,10 +6,10 @@
 #include <stdio.h>
 #include <SDL2/SDL.h>
 
-#define OWN_MAP_X 50
-#define OWN_MAP_Y 130
-#define ENEMY_MAP_X 550
-#define ENEMY_MAP_Y 130
+#define OWN_MAP_X 30
+#define OWN_MAP_Y 100
+#define ENEMY_MAP_X 530
+#define ENEMY_MAP_Y 100
 
 // ==================== RENDER ====================
 void playing_screen_render(SDL_Renderer* renderer, GameData* game) {
@@ -41,8 +41,8 @@ void playing_screen_render(SDL_Renderer* renderer, GameData* game) {
     }
 
     // Map labels
-    render_text(renderer, game->font, "YOUR MAP", 120, 70, COLOR_TEXT);
-    render_text(renderer, game->font, "ENEMY MAP", 600, 70, COLOR_TEXT);
+    render_text(renderer, game->font, "YOUR MAP", 160, 510, COLOR_TEXT);
+    render_text(renderer, game->font, "ENEMY MAP", 660, 510, COLOR_TEXT);
     
     // Draw maps
     render_map(renderer, game->font, game->font_small, game->own_map, 
@@ -60,7 +60,7 @@ void playing_screen_render(SDL_Renderer* renderer, GameData* game) {
     int mx, my;
     SDL_GetMouseState(&mx, &my);
     
-    int forfeit_x = 810, forfeit_y = 620;
+    int forfeit_x = 800, forfeit_y = 620;
     int forfeit_hover = (mx >= forfeit_x && mx <= forfeit_x + 150 && 
                          my >= forfeit_y && my <= forfeit_y + 45);
     
@@ -73,7 +73,7 @@ void playing_screen_render(SDL_Renderer* renderer, GameData* game) {
 // ==================== HANDLE CLICK ====================
 void playing_screen_handle_click(GameData* game, int x, int y) {
     // Check FORFEIT button first
-    int forfeit_x = 810, forfeit_y = 620;
+    int forfeit_x = 800, forfeit_y = 620;
     if(x >= forfeit_x && x <= forfeit_x + 150 && 
        y >= forfeit_y && y <= forfeit_y + 45) {
         // Show confirmation dialog
