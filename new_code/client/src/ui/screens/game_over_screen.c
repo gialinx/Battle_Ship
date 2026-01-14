@@ -24,7 +24,7 @@ void game_over_screen_render(SDL_Renderer* renderer, GameData* game) {
     SDL_RenderClear(renderer);
     
     int center_x = SCREEN_WIDTH / 2;
-    int start_y = 100;
+    int start_y = 90;
     
     // ==================== TITLE ====================
     SDL_Color title_color = game->game_result_won ? green : red;
@@ -35,14 +35,14 @@ void game_over_screen_render(SDL_Renderer* renderer, GameData* game) {
     render_text_centered(renderer, game->font, title, center_x + 3, start_y + 3, shadow);
     render_text_centered(renderer, game->font, title, center_x, start_y, title_color);
     
-    start_y += 80;
+    start_y += 70;
     
     // ==================== GAME STATS ====================
-    render_text_centered(renderer, game->font_small, "GAME STATISTICS", center_x, start_y, cyan);
-    start_y += 40;
+    // render_text_centered(renderer, game->font_small, "GAME STATISTICS", center_x, start_y, cyan);
+    // start_y += 40;
     
     // Stats box background (increased height for more stats)
-    SDL_Rect stats_box = {200, start_y, 600, 360};
+    SDL_Rect stats_box = {200, start_y, 600, 410};
     SDL_SetRenderDrawColor(renderer, 40, 50, 70, 255);
     SDL_RenderFillRect(renderer, &stats_box);
     SDL_SetRenderDrawColor(renderer, 100, 150, 200, 255);
